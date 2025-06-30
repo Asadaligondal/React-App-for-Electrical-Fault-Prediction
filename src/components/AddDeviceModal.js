@@ -3,18 +3,42 @@ import './AddDeviceModal.css'; // Import the dedicated CSS file
 
 const AddDeviceModal = ({ onClose, onSave }) => {
   const [deviceName, setDeviceName] = useState('');
+  const [deviceIpAddress, setDeviceIpAddress] = useState('');
   const [deviceImageUrl, setDeviceImageUrl] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+
+  const validateIpAddress = (ip) => {
+    const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    return ipRegex.test(ip);
+  };
 
   const handleSubmit = () => {
     if (!deviceName.trim()) {
       setErrorMessage('Device name cannot be empty.');
       return;
     }
+
+    if (!deviceIpAddress.trim()) {
+      setErrorMessage('IP address cannot be empty.');
+      return;
+    }
+
+    if (!validateIpAddress(deviceIpAddress)) {
+      setErrorMessage('Please enter a valid IP address (e.g., 192.168.1.100).');
+      return;
+    }
+
     setErrorMessage('');
+    
     // Call the onSave prop with the new device data
-    // Default status and health for a new device
-    onSave({ name: deviceName, imageUrl: deviceImageUrl, status: 'Normal', health: 100 });
+    onSave({ 
+      name: deviceName, 
+      ipAddress: deviceIpAddress,
+      imageUrl: deviceImageUrl, 
+      status: 'Normal', 
+      health: 100 
+    });
+    
     onClose(); // Close the modal after saving
   };
 
@@ -23,6 +47,7 @@ const AddDeviceModal = ({ onClose, onSave }) => {
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
       <div className="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
         <h2 className="text-2xl font-bold text-white mb-6 text-center">Add New Device</h2>
+        
         <div className="mb-4">
           <label htmlFor="deviceName" className="block text-gray-300 text-sm font-bold mb-2">
             Device Name:
@@ -36,6 +61,21 @@ const AddDeviceModal = ({ onClose, onSave }) => {
             placeholder="e.g., HVAC Unit, Compressor"
           />
         </div>
+
+        <div className="mb-4">
+          <label htmlFor="deviceIpAddress" className="block text-gray-300 text-sm font-bold mb-2">
+            Raspberry Pi IP Address:
+          </label>
+          <input
+            type="text"
+            id="deviceIpAddress"
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline bg-gray-700 border-gray-600 placeholder-gray-400 text-white"
+            value={deviceIpAddress}
+            onChange={(e) => setDeviceIpAddress(e.target.value)}
+            placeholder="e.g., 192.168.1.100"
+          />
+        </div>
+        
         <div className="mb-6">
           <label htmlFor="deviceImageUrl" className="block text-gray-300 text-sm font-bold mb-2">
             Image URL (Optional):
