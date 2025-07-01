@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDevices } from './DevicesContext';
+import { useModbus } from '../hooks/useModbus';
 import aiModelService from './AIModelService';
 import * as Chart from 'chart.js';
 
@@ -13,16 +14,20 @@ const AccelerometerPage = () => {
   const { getDeviceByName, updateDevicesFromAI, deviceCount } = useDevices();
   const deviceDetails = getDeviceByName(deviceName);
 
-  // Chart and WebSocket refs
+  // Modbus hook for data communication
+  const { data, loading, error, readDeviceData, testConnection, clearError } = useModbus();
+
+  // Chart refs and polling
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
-  const wsRef = useRef(null);
+  const pollingInterval = useRef(null);
   
   // State for controls and connection
   const [isPaused, setIsPaused] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
   const [isConnected, setIsConnected] = useState(false);
-  const [serverAddress, setServerAddress] = useState('ws://192.168.1.100:8080');
+  const [serverAddress, setServerAddress] = useState(deviceDetails?.ipAddress || '192.168.1.100');
+  const [serverPort, setServerPort] = useState('502');
   const [aiStatus, setAiStatus] = useState('Loading...');
   const [isAiEnabled, setIsAiEnabled] = useState(true);
 
@@ -45,19 +50,44 @@ const AccelerometerPage = () => {
     // Initialize AI model
     initializeAI();
     
-    // Connect to WebSocket
-    connectToWebSocket();
+    // Update server address if device details are available
+    if (deviceDetails?.ipAddress) {
+      setServerAddress(deviceDetails.ipAddress);
+    }
+    
+    // Start Modbus connection
+    connectToModbusDevice();
     
     // Cleanup on unmount
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
+      if (pollingInterval.current) {
+        clearInterval(pollingInterval.current);
       }
       if (chartInstance.current) {
         chartInstance.current.destroy();
       }
     };
-  }, []);
+  }, [deviceDetails]);
+
+  // Monitor Modbus data changes
+  useEffect(() => {
+    if (deviceDetails && data[deviceDetails.id]) {
+      const deviceData = data[deviceDetails.id];
+      
+      if (deviceData.connected) {
+        setIsConnected(true);
+        setConnectionStatus('Connected');
+        
+        // Process the accelerometer data
+        if (!isPaused) {
+          processModbusData(deviceData);
+        }
+      } else {
+        setIsConnected(false);
+        setConnectionStatus(deviceData.error || 'Disconnected');
+      }
+    }
+  }, [data, deviceDetails, isPaused]);
 
   const initializeAI = async () => {
     try {
@@ -146,60 +176,95 @@ const AccelerometerPage = () => {
     });
   };
 
-  const connectToWebSocket = () => {
-    try {
-      const ws = new WebSocket(serverAddress);
-      
-      ws.onopen = () => {
-        console.log(`Connected to accelerometer WebSocket server at ${serverAddress}`);
-        setConnectionStatus('Connected');
-        setIsConnected(true);
-        showNotification('Connected to sensor', 'success');
-      };
-      
-      ws.onclose = () => {
-        console.log('Disconnected from WebSocket server');
-        setConnectionStatus('Disconnected');
-        setIsConnected(false);
-        showNotification('Disconnected from sensor', 'error');
-      };
-      
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setConnectionStatus('Connection Error');
-        setIsConnected(false);
-        showNotification('Connection error', 'error');
-      };
-      
-      ws.onmessage = (event) => {
-        if (isPaused) return;
-        
-        try {
-          const data = JSON.parse(event.data);
-          updateChart(data.frequencies, data.magnitudes);
-        } catch (error) {
-          console.error('Error parsing WebSocket data:', error);
-        }
-      };
-      
-      wsRef.current = ws;
-    } catch (error) {
-      console.error('Failed to connect to WebSocket:', error);
-      setConnectionStatus('Failed to Connect');
-      showNotification('Failed to connect to sensor', 'error');
+  const connectToModbusDevice = async () => {
+    if (!deviceDetails) {
+      setConnectionStatus('Device not found');
+      return;
     }
+
+    setConnectionStatus('Connecting...');
+    
+    try {
+      // Test the connection first
+      const testResult = await testConnection(serverAddress, parseInt(serverPort));
+      
+      if (testResult && testResult.connected) {
+        setIsConnected(true);
+        setConnectionStatus('Connected');
+        showNotification('Connected to Modbus device', 'success');
+        
+        // Start polling for data
+        startDataPolling();
+      } else {
+        setIsConnected(false);
+        setConnectionStatus(testResult?.error || 'Connection Failed');
+        showNotification('Failed to connect to Modbus device', 'error');
+      }
+    } catch (error) {
+      console.error('Modbus connection error:', error);
+      setConnectionStatus('Connection Error');
+      setIsConnected(false);
+      showNotification('Connection error', 'error');
+    }
+  };
+
+  const startDataPolling = () => {
+    if (pollingInterval.current) {
+      clearInterval(pollingInterval.current);
+    }
+
+    pollingInterval.current = setInterval(async () => {
+      if (!isPaused && deviceDetails) {
+        try {
+          await readDeviceData(deviceDetails.id);
+        } catch (error) {
+          console.error('Error reading device data:', error);
+        }
+      }
+    }, 1000); // Poll every 1 second
+  };
+
+  const processModbusData = async (deviceData) => {
+    // Convert raw accelerometer data to frequency spectrum
+    // This is a simplified example - you'll need to implement proper FFT
+    const frequencies = generateFrequencySpectrum(deviceData.x, deviceData.y, deviceData.z);
+    
+    updateChart(frequencies.labels, frequencies.magnitudes);
+  };
+
+  const generateFrequencySpectrum = (x, y, z) => {
+    // Simplified frequency spectrum generation
+    // In a real implementation, you'd use FFT on time-series data
+    const magnitude = Math.sqrt(x * x + y * y + z * z);
+    
+    // Generate mock frequency spectrum based on accelerometer magnitude
+    const labels = [];
+    const magnitudes = [];
+    
+    for (let freq = 0; freq < 200; freq += 5) {
+      labels.push(freq.toString());
+      
+      // Create realistic-looking spectrum with some peaks at component frequencies
+      let mag = Math.random() * 0.1; // Base noise
+      
+      // Add peaks at component frequencies
+      Object.values(componentFrequencies).forEach(compFreq => {
+        if (Math.abs(freq - compFreq) < 3) {
+          mag += magnitude * 0.1 * Math.exp(-Math.pow(freq - compFreq, 2) / 10);
+        }
+      });
+      
+      magnitudes.push(mag);
+    }
+    
+    return { labels, magnitudes };
   };
 
   const updateChart = async (frequencies, magnitudes) => {
     if (!chartInstance.current) return;
     
-    // Limit to frequencies under 200Hz for better visualization
-    const maxFreqIndex = frequencies.findIndex(freq => parseFloat(freq) > 200);
-    const limitIndex = maxFreqIndex > 0 ? maxFreqIndex : Math.min(frequencies.length, 50);
-    
-    chartInstance.current.data.labels = frequencies.slice(0, limitIndex);
-    chartInstance.current.data.datasets[0].data = magnitudes.slice(0, limitIndex).map(m => parseFloat(m));
-    
+    chartInstance.current.data.labels = frequencies;
+    chartInstance.current.data.datasets[0].data = magnitudes;
     chartInstance.current.update('none');
 
     // Run AI predictions on the data
@@ -215,7 +280,6 @@ const AccelerometerPage = () => {
       if (predictions) {
         const statuses = aiModelService.convertToStatuses(predictions);
         if (statuses) {
-          // Update all device statuses via context
           updateDevicesFromAI(statuses);
           console.log('AI Predictions applied:', statuses);
         }
@@ -245,13 +309,19 @@ const AccelerometerPage = () => {
   };
 
   const handleReconnect = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
     setConnectionStatus('Reconnecting...');
+    clearError();
     setTimeout(() => {
-      connectToWebSocket();
+      connectToModbusDevice();
     }, 1000);
+  };
+
+  const handleAddressChange = () => {
+    if (pollingInterval.current) {
+      clearInterval(pollingInterval.current);
+    }
+    setIsConnected(false);
+    setConnectionStatus('Disconnected');
   };
 
   const toggleAI = () => {
@@ -263,7 +333,6 @@ const AccelerometerPage = () => {
   };
 
   const showNotification = (message, type) => {
-    // Simple notification - you could enhance this
     console.log(`${type.toUpperCase()}: ${message}`);
   };
 
@@ -287,20 +356,28 @@ const AccelerometerPage = () => {
           {deviceName.toUpperCase()} - ACCELEROMETER DATA
         </h1>
         
-        <div className="w-32"></div> {/* Spacer for centering */}
+        <div className="w-32"></div>
       </div>
 
-      {/* Main content area with accelerometer chart */}
+      {/* Main content area */}
       <div className="max-w-7xl mx-auto">
         {/* Connection Status */}
         <div className="bg-gray-800 rounded-xl p-4 mb-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-6">
-              {/* WebSocket Status */}
+              {/* Modbus Status */}
               <div className="flex items-center space-x-2">
                 <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
-                <span className="text-sm font-semibold">WebSocket: {connectionStatus}</span>
+                <span className="text-sm font-semibold">Modbus: {connectionStatus}</span>
               </div>
+              
+              {/* Device Info */}
+              {deviceDetails && (
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-gray-300">Device: {deviceDetails.name}</span>
+                  <span className="text-sm text-gray-400">({deviceDetails.ipAddress})</span>
+                </div>
+              )}
               
               {/* AI Status */}
               <div className="flex items-center space-x-2">
@@ -328,25 +405,55 @@ const AccelerometerPage = () => {
             <div className="flex items-center space-x-4">
               {/* Server Address Input */}
               <div className="flex items-center space-x-2">
-                <label className="text-sm text-gray-300">Server:</label>
+                <label className="text-sm text-gray-300">IP:</label>
                 <input
                   type="text"
                   value={serverAddress}
-                  onChange={(e) => setServerAddress(e.target.value)}
-                  placeholder="ws://192.168.1.100:8080"
-                  className="bg-gray-700 border border-gray-600 text-white text-sm rounded px-3 py-1 w-48 focus:ring-blue-500 focus:border-blue-500"
+                  onChange={(e) => {
+                    setServerAddress(e.target.value);
+                    handleAddressChange();
+                  }}
+                  placeholder="192.168.1.100"
+                  className="bg-gray-700 border border-gray-600 text-white text-sm rounded px-3 py-1 w-32 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <label className="text-sm text-gray-300">Port:</label>
+                <input
+                  type="text"
+                  value={serverPort}
+                  onChange={(e) => {
+                    setServerPort(e.target.value);
+                    handleAddressChange();
+                  }}
+                  placeholder="502"
+                  className="bg-gray-700 border border-gray-600 text-white text-sm rounded px-3 py-1 w-16 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
               <button
                 onClick={handleReconnect}
-                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors duration-200"
+                disabled={loading}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-4 py-2 rounded-lg transition-colors duration-200"
               >
                 <i className="fas fa-sync-alt mr-2"></i>
-                Connect
+                {loading ? 'Connecting...' : 'Connect'}
               </button>
             </div>
           </div>
         </div>
+
+        {/* Error Display */}
+        {error && (
+          <div className="bg-red-800 border border-red-600 rounded-lg p-4 mb-6">
+            <div className="flex items-center justify-between">
+              <span className="text-red-200">Error: {error}</span>
+              <button
+                onClick={clearError}
+                className="text-red-200 hover:text-white"
+              >
+                <i className="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Chart Container */}
         <div className="bg-gray-800 rounded-xl p-6 mb-6">
@@ -422,12 +529,14 @@ const AccelerometerPage = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-gray-800 rounded-lg p-6">
             <h3 className="text-lg font-semibold mb-2">Sensor Status</h3>
-            <p className="text-green-400">🟢 Active</p>
+            <p className={isConnected ? "text-green-400" : "text-red-400"}>
+              {isConnected ? "🟢 Active" : "🔴 Inactive"}
+            </p>
           </div>
           
           <div className="bg-gray-800 rounded-lg p-6">
-            <h3 className="text-lg font-semibold mb-2">Sample Rate</h3>
-            <p className="text-blue-400">1000 Hz</p>
+            <h3 className="text-lg font-semibold mb-2">Protocol</h3>
+            <p className="text-blue-400">Modbus TCP</p>
           </div>
           
           <div className="bg-gray-800 rounded-lg p-6">

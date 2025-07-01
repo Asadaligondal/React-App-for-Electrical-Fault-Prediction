@@ -16,7 +16,7 @@ app.use(express.json());
 // Routes
 app.use('/api/auth', require('./server/routes/auth'));
 app.use('/api/devices', require('./server/routes/devices'));  // Add this line
-
+app.use('/api/modbus', require('./server/routes/modbus'));  // Add this line
 // Basic test route
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend server is running!' });
