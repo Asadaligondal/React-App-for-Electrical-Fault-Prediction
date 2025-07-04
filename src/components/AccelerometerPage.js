@@ -6,6 +6,9 @@ import aiModelService from './AIModelService';
 import * as Chart from 'chart.js';
 
 const AccelerometerPage = () => {
+
+  
+
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const deviceName = searchParams.get('device') || 'Unknown Device';
@@ -68,26 +71,59 @@ const AccelerometerPage = () => {
       }
     };
   }, [deviceDetails]);
-
+useEffect(() => {
+  if (deviceDetails && updateDevicesFromAI) {
+    console.log("🚀 AUTO-TESTING: Sending mock predictions for", deviceDetails.name);
+    setTimeout(() => {
+      const mockAiPredictions = {
+        motor: { status: "Faulty", confidence: 0.95 },
+        pulley: { status: "Warning", confidence: 0.80 },
+        belt: { status: "Normal", confidence: 0.90 },
+        bearing: { status: "Warning", confidence: 0.75 },
+        gear: { status: "Faulty", confidence: 0.85 }
+      };
+      updateDevicesFromAI(mockAiPredictions);
+      console.log("✅ AUTO-TEST: AI predictions applied automatically");
+    }, 2000); // Wait 2 seconds after page load
+  }
+}, [deviceDetails, updateDevicesFromAI]);
   // Monitor Modbus data changes
-  useEffect(() => {
-    if (deviceDetails && data[deviceDetails.id]) {
-      const deviceData = data[deviceDetails.id];
+useEffect(() => {
+  console.log("useEffect triggered - deviceDetails:", deviceDetails?.name, "data exists:", !!data[deviceDetails?.id]);
+  if (deviceDetails && data[deviceDetails.id]) {
+    const deviceData = data[deviceDetails.id];
+    
+    if (deviceData.connected) {
+      setIsConnected(true);
+      setConnectionStatus('Connected');
       
-      if (deviceData.connected) {
-        setIsConnected(true);
-        setConnectionStatus('Connected');
-        
-        // Process the accelerometer data
-        if (!isPaused) {
-          processModbusData(deviceData);
+      // Process the accelerometer data
+      if (!isPaused) {
+        processModbusData(deviceData);
+        // Update AI predictions if available
+        if (deviceData.aiPredictions) { 
+          updateDevicesFromAI(deviceData.aiPredictions);
         }
-      } else {
-        setIsConnected(false);
-        setConnectionStatus(deviceData.error || 'Disconnected');
       }
+    } else {
+      setIsConnected(false);
+  setConnectionStatus(deviceData.error || 'Disconnected');
+  
+  // Test AI with mock data when Modbus fails
+  const mockAiPredictions = {
+    motor: { status: "Warning", confidence: 0.85 },
+    pulley: { status: "Normal", confidence: 0.92 },
+    belt: { status: "Faulty", confidence: 0.78 },
+    bearing: { status: "Normal", confidence: 0.88 },
+    gear: { status: "Warning", confidence: 0.71 }
+  };
+  
+  console.log("About to call updateDevicesFromAI with:", mockAiPredictions);
+  updateDevicesFromAI(mockAiPredictions);
+  console.log("updateDevicesFromAI called successfully");
     }
-  }, [data, deviceDetails, isPaused]);
+  }
+}, [data, deviceDetails, isPaused]);
 
   const initializeAI = async () => {
     try {
@@ -344,6 +380,22 @@ const AccelerometerPage = () => {
     <div className="min-h-screen bg-gray-900 text-white p-4 font-inter">
       {/* Header with back button */}
       <div className="flex items-center justify-between mb-8">
+      <button 
+  onClick={() => {
+    const mockAiPredictions = {
+      motor: { status: "Warning", confidence: 0.85 },
+      pulley: { status: "Normal", confidence: 0.92 },
+      belt: { status: "Faulty", confidence: 0.78 },
+      bearing: { status: "Normal", confidence: 0.88 },
+      gear: { status: "Warning", confidence: 0.71 }
+    };
+    updateDevicesFromAI(mockAiPredictions);
+    console.log("MANUALLY applied AI predictions");
+  }}
+  className="bg-purple-600 px-4 py-2 rounded"
+>
+  Test AI Predictions
+</button>
         <button
           onClick={handleBackToComponents}
           className="flex items-center space-x-2 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg transition-colors duration-200"
