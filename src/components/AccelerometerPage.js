@@ -4,11 +4,9 @@ import { useDevices } from './DevicesContext';
 import { useModbus } from '../hooks/useModbus';
 import aiModelService from './AIModelService';
 import * as Chart from 'chart.js';
+import './AccelerometerPage.css';
 
 const AccelerometerPage = () => {
-
-  
-
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const deviceName = searchParams.get('device') || 'Unknown Device';
@@ -21,8 +19,10 @@ const AccelerometerPage = () => {
   const { data, loading, error, readDeviceData, testConnection, clearError } = useModbus();
 
   // Chart refs and polling
-  const chartRef = useRef(null);
-  const chartInstance = useRef(null);
+  const fftChartRef = useRef(null);
+  const rawChartRef = useRef(null);
+  const fftChartInstance = useRef(null);
+  const rawChartInstance = useRef(null);
   const pollingInterval = useRef(null);
   
   // State for controls and connection
@@ -34,96 +34,185 @@ const AccelerometerPage = () => {
   const [aiStatus, setAiStatus] = useState('Loading...');
   const [isAiEnabled, setIsAiEnabled] = useState(true);
 
-  // Component frequencies for reference lines
-  const componentFrequencies = {
-    motor: 60,
-    pulley: 30,
-    belt: 15,
-    bearing: 120,
-    gear: 45
+  // Data statistics
+  const [fftStats, setFftStats] = useState({ max: 0, min: 0 });
+  const [voltageStats, setVoltageStats] = useState({ max: 0, min: 0, rms: 0 });
+
+  // Data buffers
+  const voltageBuffer = useRef([]);
+  const timeBuffer = useRef([]);
+  const SAMPLING_FREQ = 35000; // 35kHz
+  const BUFFER_SIZE = 50; // For FFT
+
+  // Add new state for manual connection control
+  const [isManualMode, setIsManualMode] = useState(false);
+  const fftUpdateInterval = useRef(null);
+  const chartUpdateCounter = useRef(0);
+  
+  // Simple FFT implementation
+  const fft = (signal) => {
+    const N = signal.length;
+    if (N <= 1) return signal;
+    
+    // Ensure N is power of 2
+    const powerOf2 = Math.pow(2, Math.ceil(Math.log2(N)));
+    const paddedSignal = [...signal];
+    while (paddedSignal.length < powerOf2) {
+      paddedSignal.push(0);
+    }
+    
+    return fftRecursive(paddedSignal);
+  };
+
+  const fftRecursive = (signal) => {
+    const N = signal.length;
+    if (N <= 1) return signal.map(x => ({ real: x, imag: 0 }));
+    
+    const even = [];
+    const odd = [];
+    
+    for (let i = 0; i < N; i++) {
+      if (i % 2 === 0) {
+        even.push(signal[i]);
+      } else {
+        odd.push(signal[i]);
+      }
+    }
+    
+    const evenFFT = fftRecursive(even);
+    const oddFFT = fftRecursive(odd);
+    
+    const result = new Array(N);
+    
+    for (let k = 0; k < N / 2; k++) {
+      const angle = -2 * Math.PI * k / N;
+      const twiddle = {
+        real: Math.cos(angle),
+        imag: Math.sin(angle)
+      };
+      
+      const oddTerm = {
+        real: oddFFT[k].real * twiddle.real - oddFFT[k].imag * twiddle.imag,
+        imag: oddFFT[k].real * twiddle.imag + oddFFT[k].imag * twiddle.real
+      };
+      
+      result[k] = {
+        real: evenFFT[k].real + oddTerm.real,
+        imag: evenFFT[k].imag + oddTerm.imag
+      };
+      
+      result[k + N / 2] = {
+        real: evenFFT[k].real - oddTerm.real,
+        imag: evenFFT[k].imag - oddTerm.imag
+      };
+    }
+    
+    return result;
+  };
+
+  // Mock data generation functions
+  const generateMockVoltageData = () => {
+    // TODO: Replace this with real voltage data from your sensor
+    // This should be called from your data acquisition function
+    
+    // Generate random noise between 0.5 and 1.6V
+    return 0.5 + Math.random() * 1.1;
+  };
+
+  const generateMockFFTData = () => {
+    // TODO: Replace this with real voltage buffer for FFT processing
+    // This function should receive a buffer of voltage samples at 35kHz
+    
+    // Generate mock sinusoids for realistic frequency spectrum
+    const buffer = [];
+    const time = Date.now() / 1000;
+    
+    for (let i = 0; i < BUFFER_SIZE; i++) {
+      const t = i / SAMPLING_FREQ;
+      // Mix of different frequencies for realistic spectrum
+      let signal = 0;
+      signal += 1 * Math.sin(2 * Math.PI * 60 * t);     // 60Hz component
+      signal += 0.8 * Math.sin(2 * Math.PI * 120 * t);    // 120Hz component
+      signal += 0.6 * Math.sin(2 * Math.PI * 1000 * t);  // 1kHz component
+      signal += 0.1 * (Math.random() - 0.5);              // Noise
+      
+      buffer.push(signal);
+    }
+    
+    return buffer;
   };
 
   useEffect(() => {
     // Register Chart.js components
     Chart.Chart.register(...Chart.registerables);
     
-    // Initialize chart
-    initializeChart();
+    // Initialize charts
+    initializeCharts();
     
-    // Initialize AI model
-    initializeAI();
+    // Don't auto-initialize AI - let user control it
+    setAiStatus('AI Model Not Loaded');
+    setIsAiEnabled(false);
     
     // Update server address if device details are available
     if (deviceDetails?.ipAddress) {
       setServerAddress(deviceDetails.ipAddress);
     }
     
-    // Start Modbus connection
-    connectToModbusDevice();
+    // Don't auto-connect - let user do it manually
+    setConnectionStatus('Disconnected');
+    setIsConnected(false);
+    
+    // Start data polling immediately for mock data plotting
+    startDataPolling();
     
     // Cleanup on unmount
     return () => {
       if (pollingInterval.current) {
         clearInterval(pollingInterval.current);
       }
-      if (chartInstance.current) {
-        chartInstance.current.destroy();
+      if (fftUpdateInterval.current) {
+        clearInterval(fftUpdateInterval.current);
+      }
+      if (fftChartInstance.current) {
+        fftChartInstance.current.destroy();
+      }
+      if (rawChartInstance.current) {
+        rawChartInstance.current.destroy();
       }
     };
   }, [deviceDetails]);
-useEffect(() => {
-  if (deviceDetails && updateDevicesFromAI) {
-    console.log("🚀 AUTO-TESTING: Sending mock predictions for", deviceDetails.name);
-    setTimeout(() => {
-      const mockAiPredictions = {
-        motor: { status: "Faulty", confidence: 0.95 },
-        pulley: { status: "Warning", confidence: 0.80 },
-        belt: { status: "Normal", confidence: 0.90 },
-        bearing: { status: "Warning", confidence: 0.75 },
-        gear: { status: "Faulty", confidence: 0.85 }
-      };
-      updateDevicesFromAI(mockAiPredictions);
-      console.log("✅ AUTO-TEST: AI predictions applied automatically");
-    }, 2000); // Wait 2 seconds after page load
-  }
-}, [deviceDetails, updateDevicesFromAI]);
-  // Monitor Modbus data changes
-useEffect(() => {
-  console.log("useEffect triggered - deviceDetails:", deviceDetails?.name, "data exists:", !!data[deviceDetails?.id]);
-  if (deviceDetails && data[deviceDetails.id]) {
-    const deviceData = data[deviceDetails.id];
-    
-    if (deviceData.connected) {
-      setIsConnected(true);
-      setConnectionStatus('Connected');
-      
-      // Process the accelerometer data
-      if (!isPaused) {
-        processModbusData(deviceData);
-        // Update AI predictions if available
-        if (deviceData.aiPredictions) { 
-          updateDevicesFromAI(deviceData.aiPredictions);
-        }
-      }
-    } else {
-      setIsConnected(false);
-  setConnectionStatus(deviceData.error || 'Disconnected');
-  
-  // Test AI with mock data when Modbus fails
-  const mockAiPredictions = {
-    motor: { status: "Warning", confidence: 0.85 },
-    pulley: { status: "Normal", confidence: 0.92 },
-    belt: { status: "Faulty", confidence: 0.78 },
-    bearing: { status: "Normal", confidence: 0.88 },
-    gear: { status: "Warning", confidence: 0.71 }
-  };
-  
-  console.log("About to call updateDevicesFromAI with:", mockAiPredictions);
-  updateDevicesFromAI(mockAiPredictions);
-  console.log("updateDevicesFromAI called successfully");
+
+  useEffect(() => {
+    if (deviceDetails && updateDevicesFromAI) {
+      console.log("🚀 AUTO-TESTING: Sending mock predictions for", deviceDetails.name);
+      setTimeout(() => {
+        const mockAiPredictions = {
+          motor: { status: "Faulty", confidence: 0.95 },
+          pulley: { status: "Warning", confidence: 0.80 },
+          belt: { status: "Normal", confidence: 0.90 },
+          bearing: { status: "Warning", confidence: 0.75 },
+          gear: { status: "Faulty", confidence: 0.85 }
+        };
+        updateDevicesFromAI(mockAiPredictions);
+        console.log("✅ AUTO-TEST: AI predictions applied automatically");
+      }, 2000);
     }
-  }
-}, [data, deviceDetails, isPaused]);
+  }, [deviceDetails, updateDevicesFromAI]);
+
+  // Monitor Modbus data changes - simplified
+  useEffect(() => {
+    if (deviceDetails && data[deviceDetails.id]) {
+      const deviceData = data[deviceDetails.id];
+      
+      if (deviceData.connected) {
+        setIsConnected(true);
+        setConnectionStatus('Connected');
+      } else {
+        setIsConnected(false);
+        setConnectionStatus(deviceData.error || 'Disconnected');
+      }
+    }
+  }, [data, deviceDetails]);
 
   const initializeAI = async () => {
     try {
@@ -132,6 +221,7 @@ useEffect(() => {
       
       if (success) {
         setAiStatus('AI Model Ready');
+        setIsAiEnabled(true);
         showNotification('AI model loaded successfully', 'success');
       } else {
         setAiStatus('AI Model Failed');
@@ -145,19 +235,20 @@ useEffect(() => {
     }
   };
 
-  const initializeChart = () => {
-    const ctx = chartRef.current.getContext('2d');
-    
-    chartInstance.current = new Chart.Chart(ctx, {
-      type: 'bar',
+  const initializeCharts = () => {
+    // Initialize FFT Chart
+    const fftCtx = fftChartRef.current.getContext('2d');
+    fftChartInstance.current = new Chart.Chart(fftCtx, {
+      type: 'line',
       data: {
         labels: [],
         datasets: [{
           label: 'Frequency Spectrum',
           data: [],
-          backgroundColor: 'rgba(75, 192, 192, 0.7)',
+          backgroundColor: 'rgba(75, 192, 192, 0.2)',
           borderColor: 'rgba(75, 192, 192, 1)',
-          borderWidth: 1
+          borderWidth: 1,
+          fill: true
         }]
       },
       options: {
@@ -172,12 +263,8 @@ useEffect(() => {
               text: 'Magnitude',
               color: 'rgba(255, 255, 255, 0.7)'
             },
-            grid: {
-              color: 'rgba(255, 255, 255, 0.1)'
-            },
-            ticks: {
-              color: 'rgba(255, 255, 255, 0.7)'
-            }
+            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+            ticks: { color: 'rgba(255, 255, 255, 0.7)' }
           },
           x: {
             title: {
@@ -185,63 +272,61 @@ useEffect(() => {
               text: 'Frequency (Hz)',
               color: 'rgba(255, 255, 255, 0.7)'
             },
-            grid: {
-              color: 'rgba(255, 255, 255, 0.1)'
-            },
-            ticks: {
-              color: 'rgba(255, 255, 255, 0.7)',
-              maxTicksLimit: 20
-            }
+            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+            ticks: { color: 'rgba(255, 255, 255, 0.7)' }
           }
         },
         plugins: {
-          legend: {
-            labels: {
-              color: 'rgba(255, 255, 255, 0.7)'
-            }
-          },
-          tooltip: {
-            callbacks: {
-              title: function(tooltipItems) {
-                return `Frequency: ${tooltipItems[0].label} Hz`;
-              }
-            }
-          }
+          legend: { labels: { color: 'rgba(255, 255, 255, 0.7)' } }
         }
       }
     });
-  };
 
-  const connectToModbusDevice = async () => {
-    if (!deviceDetails) {
-      setConnectionStatus('Device not found');
-      return;
-    }
-
-    setConnectionStatus('Connecting...');
-    
-    try {
-      // Test the connection first
-      const testResult = await testConnection(serverAddress, parseInt(serverPort));
-      
-      if (testResult && testResult.connected) {
-        setIsConnected(true);
-        setConnectionStatus('Connected');
-        showNotification('Connected to Modbus device', 'success');
-        
-        // Start polling for data
-        startDataPolling();
-      } else {
-        setIsConnected(false);
-        setConnectionStatus(testResult?.error || 'Connection Failed');
-        showNotification('Failed to connect to Modbus device', 'error');
+    // Initialize Raw Voltage Chart
+    const rawCtx = rawChartRef.current.getContext('2d');
+    rawChartInstance.current = new Chart.Chart(rawCtx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Voltage (V)',
+          data: [],
+          backgroundColor: 'rgba(255, 206, 86, 0.2)',
+          borderColor: 'rgba(255, 206, 86, 1)',
+          borderWidth: 1,
+          fill: false,
+          pointRadius: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 0 },
+        scales: {
+          y: {
+            title: {
+              display: true,
+              text: 'Voltage (V)',
+              color: 'rgba(255, 255, 255, 0.7)'
+            },
+            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+            ticks: { color: 'rgba(255, 255, 255, 0.7)' }
+          },
+          x: {
+            title: {
+              display: true,
+              text: 'Time (ms)',
+              color: 'rgba(255, 255, 255, 0.7)'
+            },
+            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+            ticks: { color: 'rgba(255, 255, 255, 0.7)' }
+          }
+        },
+        plugins: {
+          legend: { labels: { color: 'rgba(255, 255, 255, 0.7)' } }
+        }
       }
-    } catch (error) {
-      console.error('Modbus connection error:', error);
-      setConnectionStatus('Connection Error');
-      setIsConnected(false);
-      showNotification('Connection error', 'error');
-    }
+    });
   };
 
   const startDataPolling = () => {
@@ -249,63 +334,124 @@ useEffect(() => {
       clearInterval(pollingInterval.current);
     }
 
+    // Fast polling for raw data (20ms) - always run for mock data
     pollingInterval.current = setInterval(async () => {
-      if (!isPaused && deviceDetails) {
+      // Only try to read Modbus if connected
+      if (!isPaused && deviceDetails && isConnected) {
         try {
           await readDeviceData(deviceDetails.id);
         } catch (error) {
           console.error('Error reading device data:', error);
         }
       }
-    }, 1000); // Poll every 1 second
-  };
+      
+      // Always process mock data for smooth plotting regardless of connection
+      if (!isPaused) {
+        processVoltageData();
+      }
+    }, 20);
 
-  const processModbusData = async (deviceData) => {
-    // Convert raw accelerometer data to frequency spectrum
-    // This is a simplified example - you'll need to implement proper FFT
-    const frequencies = generateFrequencySpectrum(deviceData.x, deviceData.y, deviceData.z);
-    
-    updateChart(frequencies.labels, frequencies.magnitudes);
-  };
-
-  const generateFrequencySpectrum = (x, y, z) => {
-    // Simplified frequency spectrum generation
-    // In a real implementation, you'd use FFT on time-series data
-    const magnitude = Math.sqrt(x * x + y * y + z * z);
-    
-    // Generate mock frequency spectrum based on accelerometer magnitude
-    const labels = [];
-    const magnitudes = [];
-    
-    for (let freq = 0; freq < 200; freq += 5) {
-      labels.push(freq.toString());
-      
-      // Create realistic-looking spectrum with some peaks at component frequencies
-      let mag = Math.random() * 0.1; // Base noise
-      
-      // Add peaks at component frequencies
-      Object.values(componentFrequencies).forEach(compFreq => {
-        if (Math.abs(freq - compFreq) < 3) {
-          mag += magnitude * 0.1 * Math.exp(-Math.pow(freq - compFreq, 2) / 10);
-        }
-      });
-      
-      magnitudes.push(mag);
+    // Separate slower interval for FFT (200ms)
+    if (fftUpdateInterval.current) {
+      clearInterval(fftUpdateInterval.current);
     }
     
-    return { labels, magnitudes };
+    fftUpdateInterval.current = setInterval(() => {
+      if (!isPaused && voltageBuffer.current.length >= 5) {
+        const fftBuffer = generateMockFFTData();
+        performFFTAnalysis(fftBuffer);
+      }
+    }, 200);
   };
 
-  const updateChart = async (frequencies, magnitudes) => {
-    if (!chartInstance.current) return;
+  const processVoltageData = () => {
+    const voltage = generateMockVoltageData();
+    const currentTime = Date.now();
     
-    chartInstance.current.data.labels = frequencies;
-    chartInstance.current.data.datasets[0].data = magnitudes;
-    chartInstance.current.update('none');
+    // Update voltage buffer for raw plot
+    voltageBuffer.current.push(voltage);
+    timeBuffer.current.push(currentTime);
+    
+    // Keep buffer size manageable for raw plot (last 100 points)
+    if (voltageBuffer.current.length > 100) {
+      voltageBuffer.current.shift();
+      timeBuffer.current.shift();
+    }
+    
+    // Update raw chart every 3rd data point to reduce rendering
+    chartUpdateCounter.current++;
+    if (chartUpdateCounter.current % 3 === 0) {
+      updateRawChart();
+    }
+  };
 
-    // Run AI predictions on the data
-    if (isAiEnabled && !isPaused) {
-      await runAIPrediction(frequencies, magnitudes);
+  const performFFTAnalysis = (voltageData) => {
+    try {
+      // Perform FFT
+      const fftResult = fft(voltageData);
+      
+      // Calculate magnitude spectrum
+      const magnitudes = fftResult.slice(0, fftResult.length / 2).map(complex => 
+        Math.sqrt(complex.real * complex.real + complex.imag * complex.imag)
+      );
+      
+      // Generate frequency labels
+      const frequencies = magnitudes.map((_, index) => 
+        (index * SAMPLING_FREQ / (2 * magnitudes.length)).toFixed(1)
+      );
+      
+      // Update FFT chart directly
+      updateFFTChart(frequencies, magnitudes);
+      
+      // Update FFT stats less frequently
+      if (chartUpdateCounter.current % 30 === 0) {
+        const maxMag = Math.max(...magnitudes);
+        const minMag = Math.min(...magnitudes);
+        setFftStats({ max: maxMag.toFixed(3), min: minMag.toFixed(3) });
+      }
+      
+      // Run AI predictions if enabled
+      if (isAiEnabled && !isPaused) {
+        runAIPrediction(frequencies, magnitudes);
+      }
+    } catch (error) {
+      console.error('FFT analysis error:', error);
+    }
+  };
+
+  const updateFFTChart = (frequencies, magnitudes) => {
+    if (!fftChartInstance.current) return;
+    
+    fftChartInstance.current.data.labels = frequencies;
+    fftChartInstance.current.data.datasets[0].data = magnitudes;
+    fftChartInstance.current.update('none');
+  };
+
+  const updateRawChart = () => {
+    if (!rawChartInstance.current) return;
+    
+    // Convert timestamps to relative time in ms
+    const baseTime = timeBuffer.current[0] || 0;
+    const timeLabels = timeBuffer.current.map(t => ((t - baseTime)).toFixed(0));
+    
+    // Calculate voltage statistics
+    const voltages = voltageBuffer.current;
+    const maxVolt = Math.max(...voltages);
+    const minVolt = Math.min(...voltages);
+    const rmsVolt = Math.sqrt(voltages.reduce((sum, v) => sum + v * v, 0) / voltages.length);
+    
+    // Update chart data directly
+    rawChartInstance.current.data.labels = timeLabels;
+    rawChartInstance.current.data.datasets[0].data = voltages;
+    rawChartInstance.current.update('none');
+    
+    // Update stats less frequently to prevent blinking
+    if (chartUpdateCounter.current % 15 === 0) {
+      setVoltageStats({
+        max: maxVolt.toFixed(3),
+        min: minVolt.toFixed(3),
+        rms: rmsVolt.toFixed(3)
+      });
     }
   };
 
@@ -336,36 +482,94 @@ useEffect(() => {
   };
 
   const handleClear = () => {
-    if (chartInstance.current) {
-      chartInstance.current.data.labels = [];
-      chartInstance.current.data.datasets[0].data = [];
-      chartInstance.current.update();
-      showNotification('Chart data cleared', 'success');
+    voltageBuffer.current = [];
+    timeBuffer.current = [];
+    
+    if (fftChartInstance.current) {
+      fftChartInstance.current.data.labels = [];
+      fftChartInstance.current.data.datasets[0].data = [];
+      fftChartInstance.current.update();
     }
+    
+    if (rawChartInstance.current) {
+      rawChartInstance.current.data.labels = [];
+      rawChartInstance.current.data.datasets[0].data = [];
+      rawChartInstance.current.update();
+    }
+    
+    showNotification('Chart data cleared', 'success');
+  };
+
+  const connectToModbusDevice = async () => {
+    if (!deviceDetails) {
+      setConnectionStatus('Device not found');
+      return;
+    }
+
+    setConnectionStatus('Connecting...');
+    
+    try {
+      const testResult = await testConnection(serverAddress, parseInt(serverPort));
+      
+      if (testResult && testResult.connected) {
+        setIsConnected(true);
+        setConnectionStatus('Connected');
+        showNotification('Connected to Modbus device', 'success');
+        startDataPolling();
+      } else {
+        setIsConnected(false);
+        setConnectionStatus(testResult?.error || 'Connection Failed');
+        showNotification('Failed to connect to Modbus device', 'error');
+      }
+    } catch (error) {
+      console.error('Modbus connection error:', error);
+      setConnectionStatus('Connection Error');
+      setIsConnected(false);
+      showNotification('Connection error', 'error');
+    }
+  };
+
+  const disconnectFromModbus = () => {
+    if (pollingInterval.current) {
+      clearInterval(pollingInterval.current);
+    }
+    if (fftUpdateInterval.current) {
+      clearInterval(fftUpdateInterval.current);
+    }
+    setIsConnected(false);
+    setConnectionStatus('Disconnected');
+    showNotification('Disconnected from Modbus device', 'success');
   };
 
   const handleReconnect = () => {
     setConnectionStatus('Reconnecting...');
     clearError();
-    setTimeout(() => {
-      connectToModbusDevice();
-    }, 1000);
+    connectToModbusDevice();
   };
 
   const handleAddressChange = () => {
     if (pollingInterval.current) {
       clearInterval(pollingInterval.current);
     }
+    if (fftUpdateInterval.current) {
+      clearInterval(fftUpdateInterval.current);
+    }
     setIsConnected(false);
     setConnectionStatus('Disconnected');
   };
 
   const toggleAI = () => {
-    setIsAiEnabled(!isAiEnabled);
-    showNotification(
-      isAiEnabled ? 'AI predictions disabled' : 'AI predictions enabled', 
-      'success'
-    );
+    if (aiStatus === 'AI Model Not Loaded') {
+      // Load AI model first
+      initializeAI();
+    } else {
+      // Toggle AI on/off
+      setIsAiEnabled(!isAiEnabled);
+      showNotification(
+        isAiEnabled ? 'AI predictions disabled' : 'AI predictions enabled', 
+        'success'
+      );
+    }
   };
 
   const showNotification = (message, type) => {
@@ -377,224 +581,205 @@ useEffect(() => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4 font-inter">
+    <div className="accelerometer-page">
       {/* Header with back button */}
-      <div className="flex items-center justify-between mb-8">
-      <button 
-  onClick={() => {
-    const mockAiPredictions = {
-      motor: { status: "Warning", confidence: 0.85 },
-      pulley: { status: "Normal", confidence: 0.92 },
-      belt: { status: "Faulty", confidence: 0.78 },
-      bearing: { status: "Normal", confidence: 0.88 },
-      gear: { status: "Warning", confidence: 0.71 }
-    };
-    updateDevicesFromAI(mockAiPredictions);
-    console.log("MANUALLY applied AI predictions");
-  }}
-  className="bg-purple-600 px-4 py-2 rounded"
->
-  Test AI Predictions
-</button>
+      <div className="header">
+        <button 
+          onClick={() => {
+            const mockAiPredictions = {
+              motor: { status: "Warning", confidence: 0.85 },
+              pulley: { status: "Normal", confidence: 0.92 },
+              belt: { status: "Faulty", confidence: 0.78 },
+              bearing: { status: "Normal", confidence: 0.88 },
+              gear: { status: "Warning", confidence: 0.71 }
+            };
+            updateDevicesFromAI(mockAiPredictions);
+            console.log("MANUALLY applied AI predictions");
+          }}
+          className="test-ai-btn"
+        >
+          Test AI Predictions
+        </button>
+        
         <button
           onClick={handleBackToComponents}
-          className="flex items-center space-x-2 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg transition-colors duration-200"
+          className="back-btn"
         >
           <i className="fas fa-arrow-left"></i>
           <span>Back to Components</span>
         </button>
         
-        <h1 className="text-4xl font-bold text-center">
-          {deviceName.toUpperCase()} - ACCELEROMETER DATA
+        <h1 className="page-title">
+          {deviceName.toUpperCase()} - VOLTAGE ANALYSIS
         </h1>
         
-        <div className="w-32"></div>
+        <div className="spacer"></div>
       </div>
 
       {/* Main content area */}
-      <div className="max-w-7xl mx-auto">
+      <div className="main-content">
         {/* Connection Status */}
-        <div className="bg-gray-800 rounded-xl p-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-6">
-              {/* Modbus Status */}
-              <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
-                <span className="text-sm font-semibold">Modbus: {connectionStatus}</span>
-              </div>
-              
-              {/* Device Info */}
-              {deviceDetails && (
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-300">Device: {deviceDetails.name}</span>
-                  <span className="text-sm text-gray-400">({deviceDetails.ipAddress})</span>
-                </div>
-              )}
-              
-              {/* AI Status */}
-              <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${
-                  aiStatus === 'AI Model Ready' ? 'bg-green-400' : 
-                  aiStatus.includes('Loading') ? 'bg-yellow-400' : 'bg-red-400'
-                }`}></div>
-                <span className="text-sm font-semibold">AI: {aiStatus}</span>
-              </div>
-              
-              {/* AI Toggle */}
-              <button
-                onClick={toggleAI}
-                disabled={aiStatus !== 'AI Model Ready'}
-                className={`px-3 py-1 rounded text-xs font-semibold transition-colors duration-200 ${
-                  isAiEnabled 
-                    ? 'bg-green-600 hover:bg-green-700 text-white' 
-                    : 'bg-gray-600 hover:bg-gray-700 text-gray-300'
-                } disabled:bg-gray-600 disabled:cursor-not-allowed`}
-              >
-                AI {isAiEnabled ? 'ON' : 'OFF'}
-              </button>
+        <div className="connection-status">
+          <div className="status-info">
+            <div className="status-item">
+              <div className={`status-dot ${isConnected ? 'connected' : 'disconnected'}`}></div>
+              <span>Modbus: {connectionStatus}</span>
             </div>
             
-            <div className="flex items-center space-x-4">
-              {/* Server Address Input */}
-              <div className="flex items-center space-x-2">
-                <label className="text-sm text-gray-300">IP:</label>
-                <input
-                  type="text"
-                  value={serverAddress}
-                  onChange={(e) => {
-                    setServerAddress(e.target.value);
-                    handleAddressChange();
-                  }}
-                  placeholder="192.168.1.100"
-                  className="bg-gray-700 border border-gray-600 text-white text-sm rounded px-3 py-1 w-32 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <label className="text-sm text-gray-300">Port:</label>
-                <input
-                  type="text"
-                  value={serverPort}
-                  onChange={(e) => {
-                    setServerPort(e.target.value);
-                    handleAddressChange();
-                  }}
-                  placeholder="502"
-                  className="bg-gray-700 border border-gray-600 text-white text-sm rounded px-3 py-1 w-16 focus:ring-blue-500 focus:border-blue-500"
-                />
+            {deviceDetails && (
+              <div className="device-info">
+                <span>Device: {deviceDetails.name}</span>
+                <span className="ip-address">({deviceDetails.ipAddress})</span>
               </div>
-              <button
-                onClick={handleReconnect}
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 px-4 py-2 rounded-lg transition-colors duration-200"
-              >
-                <i className="fas fa-sync-alt mr-2"></i>
-                {loading ? 'Connecting...' : 'Connect'}
-              </button>
+            )}
+            
+            <div className="status-item">
+              <div className={`status-dot ${
+                aiStatus === 'AI Model Ready' ? 'connected' : 
+                aiStatus.includes('Loading') ? 'warning' : 'disconnected'
+              }`}></div>
+              <span>AI: {aiStatus}</span>
+            </div>
+            
+            <button
+              onClick={toggleAI}
+              className={`ai-toggle ${isAiEnabled ? 'enabled' : 'disabled'}`}
+            >
+              {aiStatus === 'AI Model Not Loaded' ? 'Load AI' : 
+               isAiEnabled ? 'AI ON' : 'AI OFF'}
+            </button>
+          </div>
+          
+          <div className="connection-controls">
+            <div className="ip-controls">
+              <label>IP:</label>
+              <input
+                type="text"
+                value={serverAddress}
+                onChange={(e) => {
+                  setServerAddress(e.target.value);
+                  handleAddressChange();
+                }}
+                placeholder="192.168.1.100"
+                className="ip-input"
+              />
+              <label>Port:</label>
+              <input
+                type="text"
+                value={serverPort}
+                onChange={(e) => {
+                  setServerPort(e.target.value);
+                  handleAddressChange();
+                }}
+                placeholder="502"
+                className="port-input"
+              />
+            </div>
+            
+            {/* Manual connection buttons */}
+            <div className="connection-buttons">
+              {!isConnected ? (
+                <button
+                  onClick={connectToModbusDevice}
+                  disabled={loading}
+                  className="connect-btn"
+                >
+                  <i className="fas fa-plug"></i>
+                  {loading ? 'Connecting...' : 'Connect'}
+                </button>
+              ) : (
+                <button
+                  onClick={disconnectFromModbus}
+                  className="disconnect-btn"
+                >
+                  <i className="fas fa-unplug"></i>
+                  Disconnect
+                </button>
+              )}
+              
+              {isConnected && (
+                <button
+                  onClick={handleReconnect}
+                  disabled={loading}
+                  className="reconnect-btn"
+                >
+                  <i className="fas fa-sync-alt"></i>
+                  Reconnect
+                </button>
+              )}
             </div>
           </div>
         </div>
 
         {/* Error Display */}
         {error && (
-          <div className="bg-red-800 border border-red-600 rounded-lg p-4 mb-6">
-            <div className="flex items-center justify-between">
-              <span className="text-red-200">Error: {error}</span>
-              <button
-                onClick={clearError}
-                className="text-red-200 hover:text-white"
-              >
-                <i className="fas fa-times"></i>
-              </button>
-            </div>
+          <div className="error-display">
+            <span>Error: {error}</span>
+            <button onClick={clearError} className="error-close">
+              <i className="fas fa-times"></i>
+            </button>
           </div>
         )}
 
-        {/* Chart Container */}
-        <div className="bg-gray-800 rounded-xl p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-semibold">
-              {deviceName} - Frequency Spectrum Analysis
-            </h2>
-            
-            {/* Control Buttons */}
-            <div className="flex space-x-2">
-              <button
-                onClick={handlePause}
-                disabled={isPaused}
-                className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2"
-              >
-                <i className="fas fa-pause"></i>
-                <span>Pause</span>
-              </button>
-              
-              <button
-                onClick={handleResume}
-                disabled={!isPaused}
-                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2"
-              >
-                <i className="fas fa-play"></i>
-                <span>Resume</span>
-              </button>
-              
-              <button
-                onClick={handleClear}
-                className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2"
-              >
-                <i className="fas fa-trash"></i>
-                <span>Clear</span>
-              </button>
+        {/* Charts Container */}
+        <div className="charts-container">
+          {/* FFT Chart */}
+          <div className="chart-section">
+            <div className="chart-header">
+              <h2>Frequency Spectrum (FFT)</h2>
+              <div className="chart-stats">
+                <span className="stat-item">Max: {fftStats.max}</span>
+                <span className="stat-item">Min: {fftStats.min}</span>
+              </div>
+            </div>
+            <div className="chart-canvas">
+              <canvas ref={fftChartRef}></canvas>
             </div>
           </div>
-          
-          {/* Chart Canvas */}
-          <div className="bg-gray-900 rounded-lg p-4" style={{ height: '500px' }}>
-            <canvas ref={chartRef} id="accelChart"></canvas>
-          </div>
-          
-          {/* Component Frequency Reference */}
-          <div className="mt-4 p-4 bg-gray-700 rounded-lg">
-            <h3 className="text-lg font-semibold mb-2">Component Reference Frequencies:</h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-red-500 rounded"></div>
-                <span>Motor: 60Hz</span>
+
+          {/* Raw Voltage Chart */}
+          <div className="chart-section">
+            <div className="chart-header">
+              <h2>Raw Voltage Data</h2>
+              <div className="chart-stats">
+                <span className="stat-item">Max: {voltageStats.max}V</span>
+                <span className="stat-item">Min: {voltageStats.min}V</span>
+                <span className="stat-item">RMS: {voltageStats.rms}V</span>
               </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-green-500 rounded"></div>
-                <span>Pulley: 30Hz</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-blue-500 rounded"></div>
-                <span>Belt: 15Hz</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-orange-500 rounded"></div>
-                <span>Bearing: 120Hz</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-purple-500 rounded"></div>
-                <span>Gear: 45Hz</span>
-              </div>
+            </div>
+            <div className="chart-canvas">
+              <canvas ref={rawChartRef}></canvas>
             </div>
           </div>
         </div>
 
-        {/* Additional info cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-gray-800 rounded-lg p-6">
-            <h3 className="text-lg font-semibold mb-2">Sensor Status</h3>
-            <p className={isConnected ? "text-green-400" : "text-red-400"}>
-              {isConnected ? "🟢 Active" : "🔴 Inactive"}
-            </p>
-          </div>
+        {/* Control Buttons */}
+        <div className="controls">
+          <button
+            onClick={handlePause}
+            disabled={isPaused}
+            className="control-btn pause-btn"
+          >
+            <i className="fas fa-pause"></i>
+            <span>Pause</span>
+          </button>
           
-          <div className="bg-gray-800 rounded-lg p-6">
-            <h3 className="text-lg font-semibold mb-2">Protocol</h3>
-            <p className="text-blue-400">Modbus TCP</p>
-          </div>
+          <button
+            onClick={handleResume}
+            disabled={!isPaused}
+            className="control-btn resume-btn"
+          >
+            <i className="fas fa-play"></i>
+            <span>Resume</span>
+          </button>
           
-          <div className="bg-gray-800 rounded-lg p-6">
-            <h3 className="text-lg font-semibold mb-2">Data Points</h3>
-            <p className="text-purple-400">Live Stream</p>
-          </div>
+          <button
+            onClick={handleClear}
+            className="control-btn clear-btn"
+          >
+            <i className="fas fa-trash"></i>
+            <span>Clear</span>
+          </button>
         </div>
       </div>
     </div>
