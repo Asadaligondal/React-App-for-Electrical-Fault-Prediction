@@ -43,11 +43,6 @@ const AccelerometerPage = () => {
   const timeBuffer = useRef([]);
   const SAMPLING_FREQ = 35000; // 35kHz
   const BUFFER_SIZE = 50; // For FFT
-
-  // Add new state for manual connection control
-  const [isManualMode, setIsManualMode] = useState(false);
-  const fftUpdateInterval = useRef(null);
-  const chartUpdateCounter = useRef(0);
   
   // Simple FFT implementation
   const fft = (signal) => {
@@ -111,36 +106,7 @@ const AccelerometerPage = () => {
   };
 
   // Mock data generation functions
-  const generateMockVoltageData = () => {
-    // TODO: Replace this with real voltage data from your sensor
-    // This should be called from your data acquisition function
-    
-    // Generate random noise between 0.5 and 1.6V
-    return 0.5 + Math.random() * 1.1;
-  };
-
-  const generateMockFFTData = () => {
-    // TODO: Replace this with real voltage buffer for FFT processing
-    // This function should receive a buffer of voltage samples at 35kHz
-    
-    // Generate mock sinusoids for realistic frequency spectrum
-    const buffer = [];
-    const time = Date.now() / 1000;
-    
-    for (let i = 0; i < BUFFER_SIZE; i++) {
-      const t = i / SAMPLING_FREQ;
-      // Mix of different frequencies for realistic spectrum
-      let signal = 0;
-      signal += 1 * Math.sin(2 * Math.PI * 60 * t);     // 60Hz component
-      signal += 0.8 * Math.sin(2 * Math.PI * 120 * t);    // 120Hz component
-      signal += 0.6 * Math.sin(2 * Math.PI * 1000 * t);  // 1kHz component
-      signal += 0.1 * (Math.random() - 0.5);              // Noise
-      
-      buffer.push(signal);
-    }
-    
-    return buffer;
-  };
+ 
 
   useEffect(() => {
     // Register Chart.js components
@@ -162,16 +128,10 @@ const AccelerometerPage = () => {
     setConnectionStatus('Disconnected');
     setIsConnected(false);
     
-    // Start data polling immediately for mock data plotting
-    startDataPolling();
-    
     // Cleanup on unmount
     return () => {
       if (pollingInterval.current) {
         clearInterval(pollingInterval.current);
-      }
-      if (fftUpdateInterval.current) {
-        clearInterval(fftUpdateInterval.current);
       }
       if (fftChartInstance.current) {
         fftChartInstance.current.destroy();
@@ -182,22 +142,7 @@ const AccelerometerPage = () => {
     };
   }, [deviceDetails]);
 
-  useEffect(() => {
-    if (deviceDetails && updateDevicesFromAI) {
-      console.log("🚀 AUTO-TESTING: Sending mock predictions for", deviceDetails.name);
-      setTimeout(() => {
-        const mockAiPredictions = {
-          motor: { status: "Faulty", confidence: 0.95 },
-          pulley: { status: "Warning", confidence: 0.80 },
-          belt: { status: "Normal", confidence: 0.90 },
-          bearing: { status: "Warning", confidence: 0.75 },
-          gear: { status: "Faulty", confidence: 0.85 }
-        };
-        updateDevicesFromAI(mockAiPredictions);
-        console.log("✅ AUTO-TEST: AI predictions applied automatically");
-      }, 2000);
-    }
-  }, [deviceDetails, updateDevicesFromAI]);
+
 
   // Monitor Modbus data changes - simplified
   useEffect(() => {
@@ -330,146 +275,104 @@ const AccelerometerPage = () => {
   };
 
   const startDataPolling = () => {
-    if (pollingInterval.current) {
-      clearInterval(pollingInterval.current);
-    }
+  if (pollingInterval.current) {
+    clearInterval(pollingInterval.current);
+  }
 
-    // Fast polling for raw data (20ms) - always run for mock data
-    pollingInterval.current = setInterval(async () => {
-      // Only try to read Modbus if connected
-      if (!isPaused && deviceDetails && isConnected) {
-        try {
-          await readDeviceData(deviceDetails.id);
-        } catch (error) {
-          console.error('Error reading device data:', error);
+  if (!deviceDetails?.id) {
+    return;
+  }
+
+  pollingInterval.current = setInterval(async () => {
+    if (!isPaused && isConnected) {
+      try {
+        // Read real voltage data from device
+        const deviceData = await readDeviceData(deviceDetails.id);
+        
+        if (deviceData && deviceData.connected && deviceData.voltage !== undefined) {
+          // Add real voltage to buffer
+          voltageBuffer.current.push(deviceData.voltage);
+          timeBuffer.current.push(Date.now());
+          
+          // Keep buffer size manageable
+          if (voltageBuffer.current.length > BUFFER_SIZE) {
+            voltageBuffer.current.shift();
+            timeBuffer.current.shift();
+          }
+          
+          // Update voltage statistics
+          const currentVoltage = deviceData.voltage;
+          setVoltageStats(prev => ({
+            max: Math.max(prev.max, currentVoltage),
+            min: Math.min(prev.min, currentVoltage),
+            rms: Math.sqrt(voltageBuffer.current.reduce((sum, v) => sum + v * v, 0) / voltageBuffer.current.length)
+          }));
+          
+          // Update charts with real data
+          updateCharts(currentVoltage);
         }
+      } catch (error) {
+        console.error('Error reading device data:', error);
       }
-      
-      // Always process mock data for smooth plotting regardless of connection
-      if (!isPaused) {
-        processVoltageData();
-      }
-    }, 20);
+    }
+  }, 100); // 100ms polling for real-time voltage monitoring
+};
 
-    // Separate slower interval for FFT (200ms)
-    if (fftUpdateInterval.current) {
-      clearInterval(fftUpdateInterval.current);
+
+
+  const updateCharts = (voltage) => {
+  // Update raw voltage chart
+  if (rawChartInstance.current) {
+    const chart = rawChartInstance.current;
+    const now = new Date();
+    
+    // Add new data point
+    chart.data.labels.push(now.toLocaleTimeString());
+    chart.data.datasets[0].data.push(voltage);
+    
+    // Keep only last 50 points for performance
+    if (chart.data.labels.length > 50) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
     }
     
-    fftUpdateInterval.current = setInterval(() => {
-      if (!isPaused && voltageBuffer.current.length >= 5) {
-        const fftBuffer = generateMockFFTData();
-        performFFTAnalysis(fftBuffer);
-      }
-    }, 200);
-  };
+    chart.update('none'); // No animation for real-time performance
+  }
+  
+  // Update FFT chart when we have enough data
+  if (voltageBuffer.current.length >= BUFFER_SIZE) {
+    updateFFTChart();
+  }
+};
 
-  const processVoltageData = () => {
-    const voltage = generateMockVoltageData();
-    const currentTime = Date.now();
+  const updateFFTChart = () => {
+  if (fftChartInstance.current && voltageBuffer.current.length >= BUFFER_SIZE) {
+    // Use real voltage data for FFT
+    const fftResult = fft([...voltageBuffer.current]);
+    const magnitudes = fftResult.map(complex => 
+      Math.sqrt(complex.real * complex.real + complex.imag * complex.imag)
+    );
     
-    // Update voltage buffer for raw plot
-    voltageBuffer.current.push(voltage);
-    timeBuffer.current.push(currentTime);
+    // Create frequency labels
+    const freqLabels = magnitudes.slice(0, magnitudes.length / 2).map((_, i) => 
+      ((i * SAMPLING_FREQ) / magnitudes.length).toFixed(0) + ' Hz'
+    );
     
-    // Keep buffer size manageable for raw plot (last 100 points)
-    if (voltageBuffer.current.length > 100) {
-      voltageBuffer.current.shift();
-      timeBuffer.current.shift();
-    }
+    // Update FFT chart
+    const chart = fftChartInstance.current;
+    chart.data.labels = freqLabels;
+    chart.data.datasets[0].data = magnitudes.slice(0, magnitudes.length / 2);
     
-    // Update raw chart every 3rd data point to reduce rendering
-    chartUpdateCounter.current++;
-    if (chartUpdateCounter.current % 3 === 0) {
-      updateRawChart();
-    }
-  };
+    // Update FFT statistics
+    const maxMagnitude = Math.max(...magnitudes);
+    const minMagnitude = Math.min(...magnitudes);
+    setFftStats({ max: maxMagnitude, min: minMagnitude });
+    
+    chart.update('none');
+  }
+};
 
-  const performFFTAnalysis = (voltageData) => {
-    try {
-      // Perform FFT
-      const fftResult = fft(voltageData);
-      
-      // Calculate magnitude spectrum
-      const magnitudes = fftResult.slice(0, fftResult.length / 2).map(complex => 
-        Math.sqrt(complex.real * complex.real + complex.imag * complex.imag)
-      );
-      
-      // Generate frequency labels
-      const frequencies = magnitudes.map((_, index) => 
-        (index * SAMPLING_FREQ / (2 * magnitudes.length)).toFixed(1)
-      );
-      
-      // Update FFT chart directly
-      updateFFTChart(frequencies, magnitudes);
-      
-      // Update FFT stats less frequently
-      if (chartUpdateCounter.current % 30 === 0) {
-        const maxMag = Math.max(...magnitudes);
-        const minMag = Math.min(...magnitudes);
-        setFftStats({ max: maxMag.toFixed(3), min: minMag.toFixed(3) });
-      }
-      
-      // Run AI predictions if enabled
-      if (isAiEnabled && !isPaused) {
-        runAIPrediction(frequencies, magnitudes);
-      }
-    } catch (error) {
-      console.error('FFT analysis error:', error);
-    }
-  };
 
-  const updateFFTChart = (frequencies, magnitudes) => {
-    if (!fftChartInstance.current) return;
-    
-    fftChartInstance.current.data.labels = frequencies;
-    fftChartInstance.current.data.datasets[0].data = magnitudes;
-    fftChartInstance.current.update('none');
-  };
-
-  const updateRawChart = () => {
-    if (!rawChartInstance.current) return;
-    
-    // Convert timestamps to relative time in ms
-    const baseTime = timeBuffer.current[0] || 0;
-    const timeLabels = timeBuffer.current.map(t => ((t - baseTime)).toFixed(0));
-    
-    // Calculate voltage statistics
-    const voltages = voltageBuffer.current;
-    const maxVolt = Math.max(...voltages);
-    const minVolt = Math.min(...voltages);
-    const rmsVolt = Math.sqrt(voltages.reduce((sum, v) => sum + v * v, 0) / voltages.length);
-    
-    // Update chart data directly
-    rawChartInstance.current.data.labels = timeLabels;
-    rawChartInstance.current.data.datasets[0].data = voltages;
-    rawChartInstance.current.update('none');
-    
-    // Update stats less frequently to prevent blinking
-    if (chartUpdateCounter.current % 15 === 0) {
-      setVoltageStats({
-        max: maxVolt.toFixed(3),
-        min: minVolt.toFixed(3),
-        rms: rmsVolt.toFixed(3)
-      });
-    }
-  };
-
-  const runAIPrediction = async (frequencies, magnitudes) => {
-    try {
-      const predictions = await aiModelService.predictComponentHealth(frequencies, magnitudes);
-      
-      if (predictions) {
-        const statuses = aiModelService.convertToStatuses(predictions);
-        if (statuses) {
-          updateDevicesFromAI(statuses);
-          console.log('AI Predictions applied:', statuses);
-        }
-      }
-    } catch (error) {
-      console.error('AI prediction error:', error);
-    }
-  };
 
   const handlePause = () => {
     setIsPaused(true);
@@ -533,9 +436,6 @@ const AccelerometerPage = () => {
     if (pollingInterval.current) {
       clearInterval(pollingInterval.current);
     }
-    if (fftUpdateInterval.current) {
-      clearInterval(fftUpdateInterval.current);
-    }
     setIsConnected(false);
     setConnectionStatus('Disconnected');
     showNotification('Disconnected from Modbus device', 'success');
@@ -550,9 +450,6 @@ const AccelerometerPage = () => {
   const handleAddressChange = () => {
     if (pollingInterval.current) {
       clearInterval(pollingInterval.current);
-    }
-    if (fftUpdateInterval.current) {
-      clearInterval(fftUpdateInterval.current);
     }
     setIsConnected(false);
     setConnectionStatus('Disconnected');
@@ -584,23 +481,6 @@ const AccelerometerPage = () => {
     <div className="accelerometer-page">
       {/* Header with back button */}
       <div className="header">
-        <button 
-          onClick={() => {
-            const mockAiPredictions = {
-              motor: { status: "Warning", confidence: 0.85 },
-              pulley: { status: "Normal", confidence: 0.92 },
-              belt: { status: "Faulty", confidence: 0.78 },
-              bearing: { status: "Normal", confidence: 0.88 },
-              gear: { status: "Warning", confidence: 0.71 }
-            };
-            updateDevicesFromAI(mockAiPredictions);
-            console.log("MANUALLY applied AI predictions");
-          }}
-          className="test-ai-btn"
-        >
-          Test AI Predictions
-        </button>
-        
         <button
           onClick={handleBackToComponents}
           className="back-btn"

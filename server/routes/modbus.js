@@ -16,7 +16,7 @@ router.get('/device/:deviceId', auth, async (req, res) => {
       return res.status(404).json({ error: 'Device not found' });
     }
 
-    const data = await modbusService.readAccelerometerData(device.ipAddress);
+    const data = await modbusService.readVoltageData(device.ipAddress);
 
 // Get AI predictions for this data
 try {
@@ -58,7 +58,7 @@ router.post('/test-connection', auth, async (req, res) => {
       return res.status(400).json({ error: 'IP address is required' });
     }
 
-    const data = await modbusService.readAccelerometerData(ipAddress, port);
+    const data = await modbusService.readVoltageData(ipAddress, port);
 
     // Add AI predictions to test connection
     try {

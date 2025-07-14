@@ -118,7 +118,7 @@ export const useModbus = () => {
   }, [token]);
 
   // Start polling data from all devices
-  const startPolling = useCallback((intervalMs = 1000) => {
+  const startPolling = useCallback((intervalMs = 100) => {
     const interval = setInterval(() => {
       readAllDevices();
     }, intervalMs);
@@ -126,19 +126,29 @@ export const useModbus = () => {
     return () => clearInterval(interval);
   }, [readAllDevices]);
 
+
+  const startDevicePolling = useCallback((deviceId, intervalMs = 100) => {
+  const interval = setInterval(() => {
+    readDeviceData(deviceId);
+  }, intervalMs);
+
+  return () => clearInterval(interval);
+}, [readDeviceData]);
+
   // Clear error
   const clearError = () => setError(null);
 
   return {
-    data,
-    loading,
-    error,
-    connectionStatus,
-    readDeviceData,
-    readAllDevices,
-    testConnection,
-    getConnectionStatus,
-    startPolling,
-    clearError
-  };
+  data,
+  loading,
+  error,
+  connectionStatus,
+  readDeviceData,
+  readAllDevices,
+  testConnection,
+  getConnectionStatus,
+  startPolling,
+  startDevicePolling,  // New method for single device polling
+  clearError
+};
 };
