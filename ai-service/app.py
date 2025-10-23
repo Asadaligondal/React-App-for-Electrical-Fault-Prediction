@@ -33,9 +33,9 @@ async def predict_component_health(data: SensorData):
     mock_predictions = {
         "motor": ComponentPrediction(status="Normal", confidence=0.85),
         "pulley": ComponentPrediction(status="Warning", confidence=0.72),
-        "belt": ComponentPrediction(status="Normal", confidence=0.91),
+        "belt": ComponentPrediction(status="Faulty", confidence=0.91),
         "bearing": ComponentPrediction(status="Normal", confidence=0.88),
-        "gear": ComponentPrediction(status="Faulty", confidence=0.79)
+        "gear": ComponentPrediction(status="Normal", confidence=0.79)
     }
     
     return PredictionResponse(

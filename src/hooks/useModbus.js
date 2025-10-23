@@ -9,7 +9,7 @@ export const useModbus = () => {
   const [connectionStatus, setConnectionStatus] = useState({});
 
   const API_URL = 'http://localhost:5000/api/modbus';
-
+ 
   // Helper function for API calls
   const makeApiCall = async (endpoint, options = {}) => {
     try {
