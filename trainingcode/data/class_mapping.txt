@@ -1,0 +1,4 @@
+0:bearing
+1:belt
+2:flywheel
+3:healthy
