@@ -1,69 +1,69 @@
-// index.js (ESM)
-import http from "http";
-import express from "express";
-import { Server as SocketIOServer } from "socket.io";
-import dgram from "dgram";
-
-const HTTP_PORT = parseInt(process.env.STREAM_HTTP_PORT || "5002", 10);
-const UDP_PORT  = parseInt(process.env.UDP_LISTEN_PORT  || "5001", 10);
-const UDP_HOST  = process.env.UDP_HOST || "0.0.0.0";
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const ioClient = require('socket.io-client');
+const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
-const io = new SocketIOServer(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
-  path: "/socket.io/",
+const io = socketIo(server, {
+    cors: {
+        origin: ["http://localhost:3000", "http://localhost:5001", "http://localhost:5002"],
+        methods: ["GET", "POST"]
+    }
 });
+
+// Store connected React clients
+const reactClients = new Set();
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 io.on("connection", (socket) => {
-  const addr = socket.handshake.address || "unknown";
-  console.log("🔗 client connected:", socket.id, "from", addr);
-  socket.on("disconnect", (reason) => {
-    console.log("🔌 client disconnected:", socket.id, "reason:", reason);
-  });
-});
-
-server.listen(HTTP_PORT, () => {
-  console.log(`✅ Stream server listening at http://0.0.0.0:${HTTP_PORT}`);
-  console.log(`➡️  Client connect URL: http://<THIS-IP>:${HTTP_PORT}`);
-});
-
-// UDP listener
-const udpSock = dgram.createSocket("udp4");
-udpSock.on("error", (err) => console.error("❌ UDP socket error:", err));
-
-udpSock.on("message", (buf, rinfo) => {
-  try {
-    if (buf.length < 8) return;
-    const packetId = buf.readUInt32LE(0);
-    const count    = buf.readUInt32LE(4);
-    const expected = 8 + count * 4;
-    if (buf.length < expected) return;
-
-    const samples = new Float32Array(count);
-    for (let i = 0, off = 8; i < count; i++, off += 4) {
-      samples[i] = buf.readFloatLE(off);
-    }
-
-    if (packetId % 20 === 0) {
-      console.log(`📦 UDP #${packetId} from ${rinfo.address} (n=${count})`);
-    }
-
-    io.emit("accel:samples", {
-      deviceId: rinfo.address,
-      packetId,
-      sampleRate: 38400,
-      samples: Array.from(samples),
-      receivedAt: Date.now(),
+    console.log('🔌 Client connected to main server:', socket.id);
+    reactClients.add(socket.id);
+    
+    socket.on('disconnect', () => {
+        console.log('🔌 Client disconnected from main server:', socket.id);
+        reactClients.delete(socket.id);
     });
-  } catch (e) {
-    console.error("UDP decode error:", e);
-  }
+    
+    // Listen for fault predictions from UDP service
+    socket.on('fault_prediction', (data) => {
+        io.emit('fault_prediction', data);
+        console.log(`🤖 Prediction: ${data.prediction}`);
+    });
+    
+    // Listen for raw sensor data from UDP service
+    socket.on('raw_sensor_data', (data) => {
+        io.emit('raw_sensor_data', data);
+        // Raw data relayed (no logging to reduce clutter)
+    });
 });
 
-udpSock.bind(UDP_PORT, UDP_HOST, () => {
-  const a = udpSock.address();
-  console.log(`📡 UDP listening on ${a.address}:${a.port}`);
+// Connect to UDP service to listen for predictions it sends
+const udpServiceClient = ioClient('http://localhost:5001', {
+    reconnection: true,
+    reconnectionDelay: 1000,
+    reconnectionAttempts: 10
+});
+
+udpServiceClient.on('connect', () => {
+    console.log('✅ Main Server: Connected to UDP Service (port 5001)');
+});
+
+udpServiceClient.on('fault_prediction', (data) => {
+    io.emit('fault_prediction', data);
+    console.log(`🤖 Prediction: ${data.prediction}`);
+});
+
+udpServiceClient.on('raw_sensor_data', (data) => {
+    io.emit('raw_sensor_data', data);
+});
+
+udpServiceClient.on('disconnect', () => {
+    console.log('❌ Main Server: Disconnected from UDP Service');
+});
+
+server.listen(process.env.STREAM_HTTP_PORT || 5000, () => {
+    console.log(`✅ Main Server running on port ${process.env.STREAM_HTTP_PORT || 5000}`);
 });

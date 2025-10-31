@@ -1,9 +1,8 @@
 // src/pages/AccelerometerPage.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useDevices } from './DevicesContext';
-import aiModelService from './AIModelService';
-import { useStream } from '../hooks/useStream';
+// Removed DevicesContext dependency - using hardcoded devices
+import { useSocket } from '../hooks/useSocket';
 import * as Chart from 'chart.js';
 import './AccelerometerPage.css';
 
@@ -12,9 +11,15 @@ const AccelerometerPage = () => {
   const [searchParams] = useSearchParams();
   const deviceName = searchParams.get('device') || 'Unknown Device';
 
-  // Device metadata (unchanged)
-  const { getDeviceByName, updateDevicesFromAI } = useDevices();
-  const deviceDetails = getDeviceByName(deviceName);
+  // Hardcoded devices - no more dynamic device management
+  const devices = [
+    { id: 1, name: 'Bearing', type: 'bearing' },
+    { id: 2, name: 'Belt', type: 'belt' },
+    { id: 3, name: 'Flywheel', type: 'flywheel' }
+  ];
+  
+  // Socket for real-time predictions AND chart data
+  const { deviceStatuses, socket } = useSocket();
 
   // Charts
   const fftChartRef = useRef(null);
@@ -24,21 +29,26 @@ const AccelerometerPage = () => {
   const fftUpdateInterval = useRef(null);
   const chartUpdateCounter = useRef(0);
 
-  // Stream connection (Socket.IO server IP:port)
-  const [serverAddress, setServerAddress] = useState(deviceDetails?.ipAddress || '192.168.1.25'); // HTTP server IP
-  const [serverPort, setServerPort] = useState('5002'); // Socket.IO HTTP port
-  const serverUrl = `http://${serverAddress}:${serverPort}`;
-
-  const { connected: streamConnected, lastError, connect, disconnect, onBatch } = useStream({ serverUrl });
+  // Connection status - now using Socket.IO for everything
+  const [connected, setConnected] = useState(false);
+  const [lastError, setLastError] = useState(null);
+  
+  // Keep server address for display purposes (Raspberry Pi IP)
+  const [serverAddress, setServerAddress] = useState('192.168.1.35');
+  const [serverPort, setServerPort] = useState('5002');
 
   // UI states
   const [isPaused, setIsPaused] = useState(false);
-  const [aiStatus, setAiStatus] = useState('AI Model Not Loaded');
-  const [isAiEnabled, setIsAiEnabled] = useState(false);
+  const [aiStatus, setAiStatus] = useState('AI Ready (Real-time)');
+  const [isAiEnabled, setIsAiEnabled] = useState(true); // AI enabled by default
 
   // Stats
   const [fftStats, setFftStats] = useState({ max: 0, min: 0 });
   const [voltageStats, setVoltageStats] = useState({ max: 0, min: 0, rms: 0 });
+
+  // Chart data state for real-time plotting
+  const [chartData, setChartData] = useState([]);
+  const [fftData, setFftData] = useState([]);
 
   // Buffers
   const voltageBuffer = useRef([]);  // rolling window for raw plot
@@ -81,22 +91,8 @@ const AccelerometerPage = () => {
     Chart.Chart.register(...Chart.registerables);
     initializeCharts();
 
-    // Auto-fill address from device details if available
-    if (deviceDetails?.ipAddress) setServerAddress(deviceDetails.ipAddress);
-
-    // Mock AI push (kept)
-    if (deviceDetails && updateDevicesFromAI) {
-      setTimeout(() => {
-        const mockAiPredictions = {
-          motor: { status: "Faulty", confidence: 0.95 },
-          pulley: { status: "Warning", confidence: 0.80 },
-          belt: { status: "Normal", confidence: 0.90 },
-          bearing: { status: "Warning", confidence: 0.75 },
-          gear: { status: "Faulty", confidence: 0.85 }
-        };
-        updateDevicesFromAI(mockAiPredictions);
-      }, 2000);
-    }
+    // Removed device details auto-fill - using hardcoded devices now
+    // Removed mock AI push - using real AI predictions now
 
     // FFT cadence (every 200 ms)
     fftUpdateInterval.current = setInterval(() => {
@@ -116,27 +112,129 @@ const AccelerometerPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // STREAM HANDLER
+  // SOCKET.IO HANDLER FOR SENSOR DATA
   useEffect(() => {
-    onBatch((payload) => {
-      if (isPaused) return;
-      const { samples /* Float32Array */, sampleRate } = payload;
+    if (!socket) return;
 
-      // append to rolling raw window (decimate for plot if you like)
-      const arr = Array.from(samples); // keep simple; could keep typed array too
-      voltageBuffer.current.push(...arr);
-      if (voltageBuffer.current.length > RAW_WINDOW) {
-        voltageBuffer.current.splice(0, voltageBuffer.current.length - RAW_WINDOW);
+    const handleRawSensorData = (data) => {
+      console.log('📊 PLOT DEBUG - Received chart data:', {
+        deviceId: data.deviceId,
+        samplesReceived: data.samples?.length || 0,
+        firstSample: data.samples?.[0],
+        lastSample: data.samples?.[data.samples?.length - 1],
+        timestamp: data.timestamp
+      });
+
+      if (data.samples && data.samples.length > 0) {
+        // Add to chart data state
+        const timestamp = Date.now();
+        const newPoints = data.samples.map((voltage, index) => ({
+            x: timestamp + (index * (1000 / 38400)),
+            y: voltage
+        }));
+        
+        setChartData(prev => {
+            const combined = [...prev, ...newPoints];
+            return combined.slice(-2000);
+        });
+        
+        // ALSO update voltageBuffer for chart compatibility
+        voltageBuffer.current.push(...data.samples);
+        if (voltageBuffer.current.length > 2000) {
+            voltageBuffer.current = voltageBuffer.current.slice(-2000);
+        }
+        
+        // Update charts with new data
+        updateRawChart();
+        
+        // Trigger FFT analysis if we have enough data
+        if (voltageBuffer.current.length >= 8 && !isPaused) {
+          const sliceStart = Math.max(0, voltageBuffer.current.length - FFT_WINDOW);
+          const fftBuffer = voltageBuffer.current.slice(sliceStart);
+          performFFTAnalysis(fftBuffer);
+        }
+        
+        console.log('📈 PLOT DEBUG - Updated charts & performed FFT:', {
+            newPoints: newPoints.length,
+            totalChartPoints: chartData.length + newPoints.length,
+            voltageBufferSize: voltageBuffer.current.length,
+            sampleValues: newPoints.slice(0, 3)
+        });
+      } else {
+        console.log('❌ PLOT DEBUG - No samples in received data');
       }
+    };
 
-      // update raw chart (throttled)
-      chartUpdateCounter.current++;
-      if (chartUpdateCounter.current % 3 === 0) updateRawChart();
+    const handleConnect = () => {
+      console.log('✅ Socket.IO connected for sensor data');
+      setConnected(true);
+      setLastError(null);
+    };
 
-      // make sure our sampling rate is in sync (optional, we trust 38.4k)
-      void sampleRate; // placeholder; keeping your constant SAMPLING_FREQ
+    const handleDisconnect = () => {
+      console.log('❌ Socket.IO disconnected');
+      setConnected(false);
+    };
+
+    const handleConnectError = (error) => {
+      console.error('❌ Socket.IO connection error:', error);
+      setLastError('Connection failed');
+      setConnected(false);
+    };
+
+    // Listen for sensor data
+    socket.on('raw_sensor_data', handleRawSensorData);
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('connect_error', handleConnectError);
+
+    // Debug: Listen for all events to see what's coming through
+    const originalEmit = socket.emit;
+    socket.emit = function(...args) {
+      console.log('Socket emit:', args[0], args[1] ? 'with data' : '');
+      return originalEmit.apply(socket, args);
+    };
+
+    // Set initial connection status
+    setConnected(socket.connected);
+
+    return () => {
+      socket.off('raw_sensor_data', handleRawSensorData);
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
+    };
+  }, [socket, isPaused]);
+
+  // Debug: Monitor chart data changes
+  useEffect(() => {
+    if (chartData.length > 0) {
+      console.log('📊 Chart data state updated:', {
+        totalPoints: chartData.length,
+        latestPoints: chartData.slice(-3),
+        timeRange: chartData.length > 1 ? {
+          start: new Date(chartData[0].x).toLocaleTimeString(),
+          end: new Date(chartData[chartData.length - 1].x).toLocaleTimeString()
+        } : 'Single point'
+      });
+    } else {
+      console.log('📊 Chart data is empty');
+    }
+  }, [chartData]);
+
+  // Add this debug useEffect to monitor deviceStatuses changes
+  useEffect(() => {
+    console.log('🔍 DEVICE STATUS DEBUG - Current deviceStatuses:', {
+      deviceStatuses,
+      keys: Object.keys(deviceStatuses),
+      values: Object.values(deviceStatuses),
+      hasStatus192: !!deviceStatuses['192.168.1.35'],
+      statusFor192: deviceStatuses['192.168.1.35'],
+      serverAddress,
+      hasStatusForServer: !!deviceStatuses[serverAddress],
+      statusForServer: deviceStatuses[serverAddress]
     });
-  }, [onBatch, isPaused]);
+  }, [deviceStatuses, serverAddress]);
 
   // CHARTS
   const initializeCharts = () => {
@@ -184,7 +282,7 @@ const AccelerometerPage = () => {
         setFftStats({ max: maxMag.toFixed(3), min: minMag.toFixed(3) });
       }
 
-      if (isAiEnabled && !isPaused) runAIPrediction(frequencies, magnitudes);
+      // AI prediction now handled by real-time Socket.IO - no manual triggering needed
     } catch (err) {
       console.error('FFT analysis error:', err);
     }
@@ -198,55 +296,40 @@ const AccelerometerPage = () => {
   };
 
   const updateRawChart = () => {
-    if (!rawChartInstance.current) return;
+    if (!rawChartInstance.current) {
+      console.warn('⚠️ Raw chart instance not available');
+      return;
+    }
+
     const voltages = voltageBuffer.current;
+    console.log(`🔄 Updating raw chart with ${voltages.length} buffer points`);
+    
+    if (voltages.length === 0) {
+      console.warn('⚠️ No voltage data in buffer for chart update');
+      return;
+    }
+
+    // Use time-based labels for better visualization
     const dtMs = 1000 / SAMPLING_FREQ;
-    const timeLabels = voltages.map((_, i) => (i * dtMs).toFixed(0));
+    const timeLabels = voltages.map((_, i) => (i * dtMs).toFixed(1));
 
-    const maxVolt = Math.max(...voltages);
-    const minVolt = Math.min(...voltages);
-    const rmsVolt = Math.sqrt(voltages.reduce((s, v) => s + v * v, 0) / (voltages.length || 1));
-
+    // Update chart data
     rawChartInstance.current.data.labels = timeLabels;
     rawChartInstance.current.data.datasets[0].data = voltages;
     rawChartInstance.current.update('none');
 
+    console.log(`✅ Raw chart updated with ${voltages.length} points, range: ${Math.min(...voltages).toFixed(3)}V to ${Math.max(...voltages).toFixed(3)}V`);
+
+    // Update stats periodically
     if (chartUpdateCounter.current % 15 === 0) {
+      const maxVolt = Math.max(...voltages);
+      const minVolt = Math.min(...voltages);
+      const rmsVolt = Math.sqrt(voltages.reduce((s, v) => s + v * v, 0) / (voltages.length || 1));
       setVoltageStats({ max: maxVolt.toFixed(3), min: minVolt.toFixed(3), rms: rmsVolt.toFixed(3) });
     }
   };
 
-  const runAIPrediction = async (frequencies, magnitudes) => {
-    try {
-      const predictions = await aiModelService.predictComponentHealth(frequencies, magnitudes);
-      if (predictions) {
-        const statuses = aiModelService.convertToStatuses(predictions);
-        if (statuses) updateDevicesFromAI(statuses);
-      }
-    } catch (error) {
-      console.error('AI prediction error:', error);
-    }
-  };
-
-  // AI controls (unchanged)
-  const initializeAI = async () => {
-    try {
-      setAiStatus('Loading AI Model...');
-      const ok = await aiModelService.initializeModel();
-      if (ok) {
-        setAiStatus('AI Model Ready');
-        setIsAiEnabled(true);
-        showNotification('AI model loaded', 'success');
-      } else {
-        setAiStatus('AI Model Failed');
-        setIsAiEnabled(false);
-      }
-    } catch (e) {
-      console.error(e);
-      setAiStatus('AI Model Error');
-      setIsAiEnabled(false);
-    }
-  };
+  // Old AI prediction functions removed - now using real-time Socket.IO predictions
 
   // UI actions
   const handlePause = () => { setIsPaused(true); showNotification('Data stream paused', 'success'); };
@@ -266,23 +349,43 @@ const AccelerometerPage = () => {
     showNotification('Chart data cleared', 'success');
   };
 
-  const handleConnect = () => connect();
+  const handleConnect = () => {
+    if (socket) {
+      socket.connect();
+      showNotification('Connecting to data stream...', 'info');
+    }
+  };
+  
   const handleDisconnect = () => {
-    disconnect();
-    showNotification('Disconnected from stream', 'success');
+    if (socket) {
+      socket.disconnect();
+      showNotification('Disconnected from stream', 'success');
+    }
   };
 
   const handleAddressChange = () => {
-    // If user edits IP/port, force a clean reconnect
-    disconnect();
+    // Note: IP address is now just for display - data comes via Socket.IO from localhost
+    showNotification('Note: Data streams via UDP to localhost automatically', 'info');
   };
 
   const toggleAI = () => {
-    if (aiStatus === 'AI Model Not Loaded') {
-      initializeAI();
+    const newState = !isAiEnabled;
+    setIsAiEnabled(newState);
+    
+    // Send command to server to enable/disable AI predictions
+    if (socket) {
+      if (newState) {
+        console.log('🤖 Sending enable_ai command to server');
+        socket.emit('enable_ai');
+        showNotification('AI predictions enabled', 'success');
+      } else {
+        console.log('🚫 Sending disable_ai command to server');
+        socket.emit('disable_ai');
+        showNotification('AI predictions disabled', 'success');
+      }
     } else {
-      setIsAiEnabled(!isAiEnabled);
-      showNotification(isAiEnabled ? 'AI disabled' : 'AI enabled', 'success');
+      console.warn('⚠️ Socket not connected, cannot toggle AI');
+      showNotification('Socket not connected', 'error');
     }
   };
 
@@ -290,7 +393,25 @@ const AccelerometerPage = () => {
     console.log(`${type.toUpperCase()}: ${message}`);
   };
 
-  const handleBackToComponents = () => navigate('/components');
+  // Removed handleBackToComponents - routing directly to home
+
+  // Helper functions for status display
+  const getStatusColor = (deviceId, specificStatus = null) => {
+    const status = specificStatus || deviceStatuses[deviceId]?.status;
+    switch(status) {
+      case 'healthy': return '#10B981'; // green
+      case 'bearing': return '#EF4444'; // red
+      case 'belt': return '#F59E0B'; // orange
+      case 'flywheel': return '#EF4444'; // red
+      case 'unknown': return '#9333EA'; // purple
+      default: return '#6B7280'; // gray
+    }
+  };
+
+  const getStatusText = (status) => {
+    if (!status) return 'No Signal';
+    return status.charAt(0).toUpperCase() + status.slice(1);
+  };
 
   return (
     <div className="accelerometer-page">
@@ -298,25 +419,36 @@ const AccelerometerPage = () => {
       <div className="header">
         <button
           onClick={() => {
-            const mockAiPredictions = {
-              motor: { status: "Warning", confidence: 0.85 },
-              pulley: { status: "Normal",  confidence: 0.92 },
-              belt:   { status: "Faulty",  confidence: 0.78 },
-              bearing:{ status: "Normal",  confidence: 0.88 },
-              gear:   { status: "Warning", confidence: 0.71 }
-            };
-            updateDevicesFromAI(mockAiPredictions);
+            // Test charts with sample data
+            console.log('🧪 Testing charts with sample data');
+            const testSamples = Array.from({length: 100}, (_, i) => Math.sin(i * 0.1) + 1.8);
+            
+            // Test buffer update
+            voltageBuffer.current = testSamples;
+            console.log('📊 Updated voltage buffer with', testSamples.length, 'test samples');
+            
+            // Test chart data state update
+            const testChartData = testSamples.map((voltage, index) => ({
+              x: Date.now() + index * 10,
+              y: voltage
+            }));
+            setChartData(testChartData);
+            console.log('📊 Updated chart data state with', testChartData.length, 'test points');
+            
+            // Update chart
+            updateRawChart();
+            console.log('✅ Chart test completed - check if chart shows test data');
           }}
           className="test-ai-btn"
         >
-          Test AI Predictions
+          Test Charts
         </button>
 
-        <button onClick={handleBackToComponents} className="back-btn">
-          <i className="fas fa-arrow-left"></i><span>Back to Components</span>
+        <button onClick={() => navigate('/')} className="back-btn">
+          <i className="fas fa-arrow-left"></i><span>Back to Home</span>
         </button>
 
-        <h1 className="page-title">{deviceName.toUpperCase()} - VOLTAGE ANALYSIS</h1>
+        <h1 className="page-title">MOTOR COMPONENT HEALTH MONITORING</h1>
         <div className="spacer"></div>
       </div>
 
@@ -326,16 +458,14 @@ const AccelerometerPage = () => {
         <div className="connection-status">
           <div className="status-info">
             <div className="status-item">
-              <div className={`status-dot ${streamConnected ? 'connected' : 'disconnected'}`}></div>
-              <span>Stream: {streamConnected ? 'Connected' : 'Disconnected'}</span>
+              <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`}></div>
+              <span>UDP Stream: {connected ? 'Connected' : 'Disconnected'}</span>
             </div>
 
-            {deviceDetails && (
-              <div className="device-info">
-                <span>Device: {deviceDetails.name}</span>
-                <span className="ip-address">({deviceDetails.ipAddress})</span>
-              </div>
-            )}
+            {/* Removed device details display - using hardcoded devices now */}
+            <div className="device-info">
+              <span>Device: Motor System (192.168.1.35)</span>
+            </div>
 
             <div className="status-item">
               <div className={`status-dot ${
@@ -346,7 +476,7 @@ const AccelerometerPage = () => {
             </div>
 
             <button onClick={toggleAI} className={`ai-toggle ${isAiEnabled ? 'enabled' : 'disabled'}`}>
-              {aiStatus === 'AI Model Not Loaded' ? 'Load AI' : (isAiEnabled ? 'AI ON' : 'AI OFF')}
+              {isAiEnabled ? 'AI ON' : 'AI OFF'}
             </button>
           </div>
 
@@ -371,7 +501,7 @@ const AccelerometerPage = () => {
             </div>
 
             <div className="connection-buttons">
-              {!streamConnected ? (
+              {!connected ? (
                 <button onClick={handleConnect} className="connect-btn">
                   <i className="fas fa-plug"></i> Connect
                 </button>
@@ -391,6 +521,74 @@ const AccelerometerPage = () => {
             <button onClick={() => window.location.reload()} className="error-close">
               <i className="fas fa-times"></i>
             </button>
+          </div>
+        )}
+
+        {/* Real-time Component Status */}
+        {isAiEnabled && (
+          <div className="component-status-section">
+            <h2>Real-time Component Health Status</h2>
+            
+            <div className="device-grid">
+              {devices.map(device => {
+                // Get global system prediction (no device ID needed)
+                const globalPrediction = deviceStatuses.globalPrediction;
+                
+                // Map AI prediction to component-specific status
+                const getComponentStatus = () => {
+                  if (!globalPrediction?.status) {
+                    return null; // No prediction yet
+                  }
+                  
+                  const prediction = globalPrediction.status.toLowerCase();
+                  const deviceName = device.name.toLowerCase();
+                  
+                  // Handle different prediction cases
+                  if (prediction === 'healthy') {
+                    return { ...globalPrediction, status: 'healthy' };
+                  } else if (deviceName.includes(prediction)) {
+                    // Component-specific fault detected
+                    return { ...globalPrediction, status: prediction };
+                  } else {
+                    // Different component fault detected, show as healthy
+                    return { ...globalPrediction, status: 'healthy' };
+                  }
+                };
+                
+                const componentStatus = getComponentStatus();
+                
+                return (
+                  <div key={device.id} className="status-card">
+                    <div className="status-card-header">
+                      <h4>{device.name}</h4>
+                      <small>Motor System Component</small>
+                    </div>
+                    <div 
+                      className="status-indicator"
+                      style={{ 
+                        backgroundColor: getStatusColor(null, componentStatus?.status),
+                        padding: '15px',
+                        borderRadius: '8px',
+                        textAlign: 'center',
+                        color: 'white',
+                        fontWeight: 'bold',
+                        fontSize: '18px'
+                      }}
+                    >
+                      {getStatusText(componentStatus?.status)}
+                    </div>
+                    <div className="status-details">
+                      {componentStatus?.timestamp && (
+                        <small>
+                          Last Update: {new Date(componentStatus.timestamp).toLocaleTimeString()}
+                        </small>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Removed no devices message - we have hardcoded 3 devices */}
           </div>
         )}
 

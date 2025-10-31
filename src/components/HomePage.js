@@ -8,7 +8,7 @@ const HomePage = () => {
   const { user, logout } = useAuth();
 
   const handleGetStarted = () => {
-    navigate('/components');
+    navigate('/accelerometer');
   };
 
   const handleLogout = () => {

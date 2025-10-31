@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDevices } from './DevicesContext';
+import { useSocket } from '../hooks/useSocket'; // Add this import
 import './ComponentsPage.css';
 import DeviceCard from './DeviceCard';
 import AddDeviceModal from './AddDeviceModal';
@@ -17,6 +18,8 @@ const ComponentsPage = () => {
     updateDeviceStatus, 
     deviceCount 
   } = useDevices();
+
+  const { deviceStatuses } = useSocket(); // Add this line
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
@@ -55,6 +58,17 @@ const ComponentsPage = () => {
 
   const handleNavigateHome = () => {
     navigate('/');
+  };
+
+  const getStatusColor = (deviceId) => {
+    const status = deviceStatuses[deviceId]?.status;
+    switch(status) {
+        case 'healthy': return 'green';
+        case 'bearing': return 'red';
+        case 'belt': return 'orange';
+        case 'flywheel': return 'red';
+        default: return 'gray';
+    }
   };
 
   return (

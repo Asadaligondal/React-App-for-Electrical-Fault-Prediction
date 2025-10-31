@@ -1,162 +1,162 @@
 {
-  
-  "name": "electrical-system-app",
-  
-  "version": "0.1.0",
-  
-  "private": true,
-  
-  "dependencies": {
-  
-    
-  "@testing-library/dom": "^10.4.0",
-  
-    
-  "@testing-library/jest-dom": "^6.6.3",
-  
-    
-  "@testing-library/react": "^16.3.0",
-  
-    
-  "@testing-library/user-event": "^13.5.0",
-  
-    
-  "bcryptjs": "^3.0.2",
-  
-    
-  "chart.js": "^4.5.0",
-  
-    
-  "cors": "^2.8.5",
-  
-    
-  "dotenv": "^17.0.0",
-  
-    
-  "express": "^5.1.0",
-  
-    
-  "firebase": "^11.9.1",
-  
-    
-  "jsonwebtoken": "^9.0.2",
-  
-    
-  "modbus-serial": "^8.0.21-no-serial-port",
-  
-    
-  "mongoose": "^8.16.1",
-  
-    
-  "node-fetch": "^2.7.0",
-  
-    
-  "react": "^19.1.0",
-  
-    
-  "react-dom": "^19.1.0",
-  
-    
-  "react-router-dom": "^7.6.2",
-  
-    
-  "react-scripts": "5.0.1",
-  
-    
-  "socket.io": "^4.8.1",
-  
-    
-  "socket.io-client": "^4.8.1",
-  
-    
-  "web-vitals": "^2.1.4"
-  
-  },
-  
-  "scripts": {
-  
-    
-  "start": "react-scripts start",
-  
-    
-  "build": "react-scripts build",
-  
-    
-  "test": "react-scripts test",
-  
-    
-  "eject": "react-scripts eject",
-  
-    
-  "server": "nodemon server.js",
-  
-    
-  "dev": "concurrently \"npm run server\" \"npm start\""
-  
-  },
-  
-  "eslintConfig": {
-  
-    
-  "extends": [
-  
-    
-    
-  "react-app",
-  
-    
-    
-  "react-app/jest"
-  
-    
-  ]
-  
-  },
-  
-  "browserslist": {
-  
-    
-  "production": [
-  
-    
-    
-  ">0.2%",
-  
-    
-    
-  "not dead",
-  
-    
-    
-  "not op_mini all"
-  
-    
-  ],
-  
-    
-  "development": [
-  
-    
-    
-  "last 1 chrome version",
-  
-    
-    
-  "last 1 firefox version",
-  
-    
-    
-  "last 1 safari version"
-  
-    
-  ]
-  
-  },
-  
-  "devDependencies": {
-  
-    
-  "nodemon": "^3.1.10"
-  
-  }
+  
+ "name": "electrical-system-app",
+  
+ "version": "0.1.0",
+  
+ "private": true,
+  
+ "dependencies": {
+  
+   
+ "@testing-library/dom": "^10.4.0",
+  
+   
+ "@testing-library/jest-dom": "^6.6.3",
+  
+   
+ "@testing-library/react": "^16.3.0",
+  
+   
+ "@testing-library/user-event": "^13.5.0",
+  
+   
+ "bcryptjs": "^3.0.2",
+  
+   
+ "chart.js": "^4.5.0",
+  
+   
+ "cors": "^2.8.5",
+  
+   
+ "dotenv": "^17.0.0",
+  
+   
+ "express": "^5.1.0",
+  
+   
+ "firebase": "^11.9.1",
+  
+   
+ "jsonwebtoken": "^9.0.2",
+  
+   
+ "modbus-serial": "^8.0.21-no-serial-port",
+  
+   
+ "mongoose": "^8.16.1",
+  
+   
+ "node-fetch": "^2.7.0",
+  
+   
+ "react": "^19.1.0",
+  
+   
+ "react-dom": "^19.1.0",
+  
+   
+ "react-router-dom": "^7.6.2",
+  
+   
+ "react-scripts": "5.0.1",
+  
+   
+ "socket.io": "^4.8.1",
+  
+   
+ "socket.io-client": "^4.8.1",
+  
+   
+ "web-vitals": "^2.1.4"
+  
+ },
+  
+ "scripts": {
+  
+   
+ "start": "react-scripts start",
+  
+   
+ "build": "react-scripts build",
+  
+   
+ "test": "react-scripts test",
+  
+   
+ "eject": "react-scripts eject",
+  
+   
+ "server": "nodemon server.js",
+  
+   
+ "dev": "concurrently \"npm run server\" \"npm start\""
+  
+ },
+  
+ "eslintConfig": {
+  
+   
+ "extends": [
+  
+   
+   
+ "react-app",
+  
+   
+   
+ "react-app/jest"
+  
+   
+ ]
+  
+ },
+  
+ "browserslist": {
+  
+   
+ "production": [
+  
+   
+   
+ ">0.2%",
+  
+   
+   
+ "not dead",
+  
+   
+   
+ "not op_mini all"
+  
+   
+ ],
+  
+   
+ "development": [
+  
+   
+   
+ "last 1 chrome version",
+  
+   
+   
+ "last 1 firefox version",
+  
+   
+   
+ "last 1 safari version"
+  
+   
+ ]
+  
+ },
+  
+ "devDependencies": {
+  
+   
+ "nodemon": "^3.1.10"
+  
+ }
 }

@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { DevicesProvider } from './components/DevicesContext';
 import HomePage from './components/HomePage';
-import ComponentsPage from './components/ComponentsPage';
+// Removed ComponentsPage import - using hardcoded devices now
 import AccelerometerPage from './components/AccelerometerPage';
 import './App.css';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -56,14 +56,7 @@ function App() {
                 } 
               />
               
-              <Route 
-                path="/components" 
-                element={
-                  <ProtectedRoute>
-                    <ComponentsPage />
-                  </ProtectedRoute>
-                } 
-              />
+              {/* Removed /components route - using hardcoded devices now */}
               
               <Route 
                 path="/accelerometer" 
