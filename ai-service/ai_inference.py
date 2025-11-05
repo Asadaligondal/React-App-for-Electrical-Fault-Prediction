@@ -88,14 +88,25 @@ def predict_fault(samples: np.ndarray) -> str:
 
     # 1. Normalize the new, incoming data
     #    This MUST match the normalization used in your `preprocess_data.py`
-    normalized_samples = samples
-    if np.max(np.abs(samples)) > 0:
-        normalized_samples = samples / np.max(np.abs(samples))
+    # normalized_samples = samples
+    chunk_mean = np.mean(samples)
+    chunk_std = np.std(samples)
+    if chunk_std > 0:
+        # Z-score normalization then scale to [-1, 1]
+        chunk_normalized = (samples - chunk_mean) / chunk_std
+        chunk_max = np.max(np.abs(chunk_normalized))
+        if chunk_max > 0:
+            normalized_samples = chunk_normalized / chunk_max
+        else:
+            normalized_samples = chunk_normalized
+    else:
+        # If std is 0 (constant signal), just center around 0
+        normalized_samples = np.zeros_like(samples)
     
     # 2. Convert to PyTorch Tensor
     #    Shape must be [1, 1, num_samples] -> (Batch, Channels, Length)
     with torch.no_grad(): # Disable gradient calculation for inference
-        signal_tensor = torch.tensor(normalized_samples, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        signal_tensor = torch.tensor(normalized_samples, dtype=torch.float32).unsqueeze(0).unsqueeze(0) # TODO: Check Size
         
         # 3. Get model output (logits)
         logits = model(signal_tensor)

@@ -8,10 +8,10 @@ except ModuleNotFoundError:
 
 # --- CONFIGURE THIS ---
 SOURCE_FILES = {
-    "healthy": r"C:\Users\victus\Downloads\data\healthy\*.csv",
-    "belt":    r"C:\Users\victus\Downloads\data\belt\*.csv",
-    "bearing": r"C:\Users\victus\Downloads\data\bearing\*.csv",
-    "flywheel":r"C:\Users\victus\Downloads\data\flywheel\*.csv",
+    "healthy": "healthy/*.csv",
+    "belt":    "belt/*.csv",
+    "bearing": "bearing/*.csv",
+    "flywheel":"flywheel/*.csv",
 }
 
 OUTPUT_DIRECTORY = "secdatachunks"
