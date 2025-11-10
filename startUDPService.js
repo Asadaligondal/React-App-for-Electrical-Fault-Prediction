@@ -2,8 +2,8 @@ const http = require('http');
 const socketIo = require('socket.io');
 const ioClient = require('socket.io-client');
 const dgram = require('dgram');
-const config = require('../config');
-const { UDPDataProcessor, RandomSensorDataGenerator } = require('./services/udpService.js');
+const config = require('./config.js');
+const { UDPDataProcessor, RandomSensorDataGenerator } = require('./server/services/udpService.js');
 
 console.log('🎚️ Data Source Mode:', config.USE_FAKE_DATA ? 'FAKE DATA' : 'REAL RASPBERRY PI');
 
@@ -110,7 +110,7 @@ if (config.USE_FAKE_DATA) {
     const dataProcessor = new UDPDataProcessor(proxyIO);
     
     // 🎯 Use the correct UDP listener for BINARY data from Pi
-    const { createUDPListener } = require('./udp/listener.js');
+    const { createUDPListener } = require('./server/udp/listener.js');
     
     const udpSocket = createUDPListener(
         { 

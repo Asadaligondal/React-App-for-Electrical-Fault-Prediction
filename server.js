@@ -12,9 +12,17 @@ const server = http.createServer(app);
 // Enhanced Socket.IO with better CORS and transport options
 const io = socketIo(server, {
     cors: {
-        origin: config.CORS_ORIGINS,
-        methods: ["GET", "POST", "PUT", "DELETE"],
-        credentials: true
+        origin: [
+            'http://localhost:8080',  // Frontend container
+            'http://localhost:3000',  // React dev server
+            'http://localhost',       // Production
+            'http://127.0.0.1:8080',  // Alternative localhost
+            'http://127.0.0.1:3000',
+            'http://127.0.0.1'
+        ],
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        credentials: true,
+        allowedHeaders: ["Content-Type", "Authorization"]
     },
     transports: ['websocket', 'polling'],
     allowEIO3: true
@@ -27,10 +35,27 @@ connectDB();
 
 // Enhanced CORS middleware
 app.use(cors({
-    origin: config.CORS_ORIGINS,
+    origin: [
+        'http://localhost:8080',  // Frontend container
+        'http://localhost:3000',  // React dev server
+        'http://localhost',       // Production
+        'http://127.0.0.1:8080',  // Alternative localhost
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1'
+    ],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// Handle preflight requests
+app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 app.use(express.json());
 
 // Routes

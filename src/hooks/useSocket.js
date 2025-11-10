@@ -7,10 +7,10 @@ export const useSocket = () => {
 
     useEffect(() => {
         // Connect to main server Socket.IO for predictions and raw data
-        const MAIN_SOCKET_SERVER = 'http://localhost:5000';
-        console.log('🔌 Connecting to main Socket.IO server:', MAIN_SOCKET_SERVER);
+        const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
+        console.log('🔌 Connecting to main Socket.IO server:', SOCKET_URL);  // ← Changed from MAIN_SOCKET_SERVER
         
-        const newSocket = io(MAIN_SOCKET_SERVER, {
+        const newSocket = io(SOCKET_URL, {  // ← Changed from MAIN_SOCKET_SERVER
             forceNew: true,
             timeout: 10000,
             transports: ['websocket', 'polling'],
@@ -47,7 +47,7 @@ export const useSocket = () => {
         });
 
         return () => {
-            console.log('🔌 Disconnecting from UDP Socket.IO server');
+            console.log('🔌 Disconnecting from Socket.IO server');  // ← Fixed log message
             newSocket.close();
         };
     }, []);

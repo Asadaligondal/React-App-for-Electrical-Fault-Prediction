@@ -1,0 +1,18 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy UDP service code
+COPY . .
+
+# Expose UDP port (note: UDP requires special Docker configuration)
+EXPOSE 3000/udp
+
+# Start UDP service
+CMD ["node", "startUDPService.js"]
