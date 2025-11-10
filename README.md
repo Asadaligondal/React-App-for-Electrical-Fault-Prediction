@@ -1,70 +1,204 @@
-# Getting Started with Create React App
+# React App for Electrical Fault Prediction
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A containerized motor monitoring system with real-time fault detection using AI, built with React, Node.js, Python, and MongoDB.
 
-## Available Scripts
+## 🏗️ **Architecture**
+- **Frontend**: React app (Port 8080)
+- **Backend**: Node.js + Socket.IO (Port 5000)
+- **AI Service**: Python + FastAPI (Port 8001)
+- **UDP Service**: Real-time data receiver (Port 3000)
+- **Database**: MongoDB (Port 27017)
 
-In the project directory, you can run:
+## 🚀 **Quick Start (Docker)**
 
-### `npm start`
+### **Prerequisites**
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
+- [Git](https://git-scm.com/) installed
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+### **1. Clone Repository**
+```bash
+git clone https://github.com/YOUR_USERNAME/React-App-for-Electrical-Fault-Prediction.git
+cd React-App-for-Electrical-Fault-Prediction
+```
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### **2. Create Environment File**
+Create `.env` file in project root:
+```env
+# JWT Configuration
+JWT_SECRET=your-super-secret-jwt-key-for-electrical-fault-prediction-2024
+JWT_EXPIRES_IN=24h
 
-### `npm test`
+# React App URLs
+REACT_APP_SOCKET_URL=http://localhost:5000
+REACT_APP_API_URL=http://localhost:5000/api
+REACT_APP_AI_SERVICE_URL=http://localhost:8001
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+# MongoDB
+MONGODB_URI=mongodb://admin:password123@mongodb:27017/motor_monitoring?authSource=admin
 
-### `npm run build`
+# Service URLs
+AI_SERVICE_URL=http://ai-service:8001
+NODE_ENV=production
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### **3. Start All Services**
+```bash
+# Build and start all containers
+docker compose up --build -d
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+# Check if all services are running
+docker compose ps
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### **4. Access Application**
+- **Web App**: http://localhost:8080
+- **API Server**: http://localhost:5000/health
+- **AI Service**: http://localhost:8001
 
-### `npm run eject`
+### **5. View Logs (Optional)**
+```bash
+# View all service logs
+docker compose logs -f
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+# View specific service logs
+docker compose logs -f frontend
+docker compose logs -f main-server
+docker compose logs -f ai-service
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## 🛑 **Stop Application**
+```bash
+# Stop all containers
+docker compose down
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+# Stop and remove all data
+docker compose down -v
+```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+## 🔧 **Development Setup**
 
-## Learn More
+### **Run Locally (Without Docker)**
+```bash
+# Install dependencies
+npm install
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+# Start AI service
+cd ai-service
+python -m venv venv
+venv\Scripts\activate  # Windows
+pip install -r requirements.txt
+python new-app.py
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+# Start backend services (new terminal)
+node server.js
 
-### Code Splitting
+# Start React app (new terminal)
+npm start
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+## 📱 **Raspberry Pi Integration**
 
-### Analyzing the Bundle Size
+### **Pi Configuration**
+Update your Raspberry Pi script to send data to:
+```python
+PC_IP = "YOUR_PC_IP_ADDRESS"  # Your computer's IP
+PC_PORT = 3000
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+### **Expected Data Format**
+- **Protocol**: UDP
+- **Port**: 3000
+- **Data**: 320 float32 voltage samples per packet
+- **Sample Rate**: 38400Hz
 
-### Making a Progressive Web App
+## 🐳 **Docker Commands Reference**
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+```bash
+# Build all services
+docker compose build
 
-### Advanced Configuration
+# Start services in background
+docker compose up -d
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+# Start with rebuild
+docker compose up --build -d
 
-### Deployment
+# Stop services
+docker compose down
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+# View running containers
+docker compose ps
 
-### `npm run build` fails to minify
+# View logs
+docker compose logs [service-name]
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+# Restart specific service
+docker compose restart [service-name]
+
+# Remove everything (including volumes)
+docker compose down -v
+```
+
+## 📊 **Service Health Checks**
+
+```bash
+# Test all services
+curl http://localhost:8001    # AI Service
+curl http://localhost:5000/health    # Main Server
+curl http://localhost:8080    # Frontend
+```
+
+## 🔍 **Troubleshooting**
+
+### **Port Conflicts**
+If ports are busy, update `docker-compose.yml`:
+```yaml
+frontend:
+  ports:
+    - "3001:80"  # Change 8080 to 3001
+```
+
+### **MongoDB Issues**
+```bash
+# Reset MongoDB data
+docker compose down -v
+docker compose up -d
+```
+
+### **Build Failures**
+```bash
+# Clean Docker cache
+docker system prune -a
+docker compose build --no-cache
+```
+
+## 🏷️ **Project Structure**
+```
+├── docker-compose.yml      # Container orchestration
+├── .env                   # Environment variables
+├── package.json           # Node.js dependencies
+├── server.js             # Main backend server
+├── Dockerfile.frontend    # React app container
+├── Dockerfile.server     # Backend container
+├── Dockerfile.udp        # UDP service container
+├── nginx.conf            # Web server config
+├── src/                  # React source code
+├── server/               # Backend modules
+│   ├── routes/           # API routes
+│   ├── config/           # Configuration
+│   └── services/         # Business logic
+└── ai-service/           # Python AI service
+    ├── Dockerfile
+    ├── requirements.txt
+    └── new-app.py
+```
+
+## 🤝 **Contributing**
+1. Fork the repository
+2. Create feature branch
+3. Make changes
+4. Test with Docker
+5. Submit pull request
+
+## 📄 **License**
+MIT License - see LICENSE file for details
